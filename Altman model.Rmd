@@ -1,0 +1,372 @@
+---
+title: "Altman model"
+author: "Olga Sieradzan"
+date: "2025-03-05"
+output: 
+  html_document:
+    toc: true
+    toc_float: 
+      smooth_scroll: true
+    df_print: paged
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+```
+
+```{r}
+library(foreign)
+library(dplyr)
+library(cowplot)
+library(ggplot2)
+library(readr)
+library(readxl)
+database <- read.csv("5year.arff", header = TRUE, comment.char = "@")
+```
+
+***
+
+# Wstęp
+
+***
+
+**Zarządzanie ryzykiem** to jedna z podstawowych umiejętności, które muszą posiadać dzisiejsze firmy i banki w celu utrzymania swoich korzystnych sytuacji finansowych. Jednym z rodzajów ryzyka, którym można chcieć zarządzać, jest ryzyko kredytowe. Ryzyko kredytowe to na przykład prawdopodobieństwo, że kredytobiorca nie dotrzyma warunków umowy i wygeneruje straty dla kredytodawcy.
+
+Niepodważalnie jest to duży problem dla kredytodawców, w końcu oni chcą na kredytach zarabiać, a nie tracić. Jednym z rozwiązań jest klasyfikacja osób chętnych do zaciągnięcia kredytu za pomocą **liniowej analizy dyskryminacyjnej** (Altman, 1968). Ideą tej metody jest podział przedsiębiorstw na trzy grupy za pomocą wartości Z-score. Wartość ta jest obliczana na podstawie równania zbudowanego z pięciu istotnych zmiennych objaśniających, które przyjmują postać:
+
+$$
+Z = 1.2X_1 + 1.4X_2 + 3.3X_3 + 0.6X_4 + 0.99X_5
+$$
+
+Powyższy wzór powstał za pomocą maksymalizacji wartości poniższej funkcji:
+
+$$
+\frac{|m_1 - m_2|^2}{s_1^2 + s_2^2}
+$$
+Cała idea klasyfikowania przedsiębiorstw oraz model Altmana są bardzo proste i przyjemne, jednak posiadają swoje wady.
+
+Problemy, z którymi możemy się spotkać w trakcie użycia liniowej analizy dyskryminacyjnej:
+
+* Podział może opierać się na zbyt przestarzałych danych, ze względu na częstotliwość publikacji sprawozdań finansowych.
+
+* Podział za pomocą funkcji liniowej może okazać się nietrafiony.
+
+Problemy, z którymi możemy się spotkać w trakcie użycia modelu Altmana:
+
+* Szara strefa wokół linii dyskryminacji, gdzie niemożliwe jest jednoznaczne sklasyfikowanie przedsiębiorstwa.
+
+* Model może okazać się przeuczony.
+
+* Model może okazać się bezużyteczny dla danych, na których działamy.
+
+Celem niniejszej pracy jest ocena skuteczności modelu Altmana dla polskich spółek analizowanych w latach 2000–2013.Ponadto stworzony zostanie nowy model Tutsona dla polskich spółek. Jego działanie zostanie zweryfikowane i opisane.
+
+***
+
+# Wybór danych 
+
+***
+
+Do badania losowo wybrano 150 spółek uznanych za upadłe i 150 spółek działających. 200 z tych spółek zostało wykorzystanych w zbiorze uczącym , natomiast w 100 z tych spółek zostało wykorzystane w zbiorze testowym przy tworzeniu modelu Tutsona. Natomiast model Altmana został zastosowany dla całej grupy 300 spółek.
+
+Braki w danych zostały zastąpione medianą z rozważanej zmiennej objaśniającej.
+
+
+```{r}
+upadle <- database[database$X0 == 0,]
+zywe <- database[database$X0 == 1,]
+
+set.seed(900)
+
+nauka_up <- upadle[sample(1:5499, 100, replace = T),]
+nauka_zy <- zywe[sample(1:410, 100, replace = T),]
+nauka <- rbind(nauka_up,nauka_zy)
+
+test_upadle <- upadle[!rownames(upadle) %in% rownames(nauka_up), ]
+test_upadle <- test_upadle[sample(1:nrow(test_upadle), 50, replace = FALSE), ]
+
+test_zywe <- zywe[!rownames(zywe) %in% rownames(nauka_zy), ]
+test_zywe <- test_zywe[sample(1:nrow(test_zywe), 50, replace = FALSE), ]
+
+testowe <- rbind(test_upadle, test_zywe)
+
+```
+
+***
+
+# Model Altmana
+
+*** 
+
+## Zmienne objaśniające
+
+***
+
+W modelu Altmana pod uwagę branych jest 5 zmienncyh objaśniających:
+
+* X1 aktywa obrotowe / aktywa ogółem,
+* X2 zysk zatrzymany / aktywa ogółem,
+* X3 zysk przed spłatą odsetek i podatkiem / aktywa ogółem,
+* X4 wartość rynkowa kapitału akcyjnego / wartość księgowa zadłużenia,
+* X5 przychody ze sprzedaży / aktywa ogółem
+
+Poniżej zaprezntowano rozkłady potrzebnych zmiennych w podgrupach: przedsiębiorstwa upadłe i nieupadłe.
+
+```{r}
+altmanmodel_nauka <- nauka[,c(3,6,7,8,9)]
+altmanmodel_nauka_up <- nauka_up[,c(3,6,7,8,9)]
+altmanmodel_nauka_zy <- nauka_zy[,c(3,6,7,8,9)]
+
+colnames(altmanmodel_nauka) <- c("X1", "X2", "X3", "X4", "X5")
+colnames(altmanmodel_nauka_up) <- c("X1", "X2", "X3", "X4", "X5")
+colnames(altmanmodel_nauka_zy) <- c("X1", "X2", "X3", "X4", "X5")
+
+altmanmodel_nauka <- as.data.frame(lapply(altmanmodel_nauka, as.numeric))
+altmanmodel_nauka_up <- as.data.frame(lapply(altmanmodel_nauka_up, as.numeric))
+altmanmodel_nauka_zy <- as.data.frame(lapply(altmanmodel_nauka_zy, as.numeric))
+
+p1 <- ggplot()+
+  geom_density(data = altmanmodel_nauka_up, aes(x = X1, color = "Nieupadłe"), size = 1)+
+  geom_density(data = altmanmodel_nauka_zy, aes(x = X1, color ="Upadłe"), size = 1) + 
+  xlim(-1,1)+
+  labs(title = "Aktywa obrotowe / Aktywa ogółem", y = NULL, x = NULL)+
+  scale_color_manual(breaks = c("Upadłe", "Nieupadłe"), values = c("#CD1076", "orange"))+
+ theme_light()
+
+p2 <- ggplot()+
+  geom_density(data = altmanmodel_nauka_up, aes(x = X2, color = "Nieupadłe"), size = 1)+
+  geom_density(data = altmanmodel_nauka_zy, aes(x = X2, color ="Upadłe"), size = 1) + 
+   xlim(-0.5,1)+
+  labs(title = "Zysk zatrzymany / Aktywa ogółem", y = NULL, x = NULL)+
+  scale_color_manual(breaks = c("Upadłe", "Nieupadłe"), values = c("#CD1076", "orange"))+
+  theme_light()
+
+p3 <- ggplot()+
+  geom_density(data = altmanmodel_nauka_up, aes(x = X3, color = "Nieupadłe"), size = 1)+
+  geom_density(data = altmanmodel_nauka_zy, aes(x = X3, color ="Upadłe"), size = 1) + 
+   xlim(-1,1)+
+  labs(title = "Zysk przed spłatą odsetek i podatkiem / Aktywa ogółem", y = NULL, x = NULL)+
+  scale_color_manual(breaks = c("Upadłe", "Nieupadłe"), values = c("#CD1076", "orange"))+
+  theme_light()
+
+p4 <- ggplot()+
+  geom_density(data = altmanmodel_nauka_up, aes(x = X4, color = "Nieupadłe"), size = 1)+
+  geom_density(data = altmanmodel_nauka_zy, aes(x = X4, color ="Upadłe"), size = 1) + 
+  
+  labs(title = "Wartość rynkowa kapitału akcyjnego / Wartość księgowa zadłużenia", y = NULL, x = NULL)+
+  scale_color_manual(breaks = c("Upadłe", "Nieupadłe"), values = c("#CD1076", "orange"))+
+  theme_light()
+
+p5 <- ggplot()+
+  geom_density(data = altmanmodel_nauka_up, aes(x = X5, color = "Nieupadłe"), size = 1)+
+  geom_density(data = altmanmodel_nauka_zy, aes(x = X5, color ="Upadłe"), size = 1) + 
+  
+  labs(title = "Przychody ze sprzedaży / Aktywa ogółem", y = NULL, x = NULL)+
+  scale_color_manual(breaks = c("Upadłe", "Nieupadłe"), values = c("#CD1076", "orange"))+
+  theme_light()
+
+plot_grid(p1,p2,p3, nrow = 3)
+plot_grid(p4,p5, nrow = 2)
+```
+
+Rozkłady rozważanych zmiennych w modelu Altmana już wskazują na to, że dobór zmiennych prawdopodobnie nie jest najlepszy, ponieważ rozkłady na wykresach są do siebie często dosyć podobne. Oznacza to, że taki dobór zmiennych może być niekorzystny w przypadku zamiaru klasyfikacji spółek do dwóch różnych grup.
+
+*** 
+
+## Wyniki 
+
+***
+
+Wyniki modelu Altmana trzeba interpretować za pomocą przedziałów:
+
+* $Z > 3.0$ = niskie prawdopodobieństwo bankrutctwa
+
+* $1.8 < Z < 3.0$ = szara strefa
+
+* $Z < 1.8$ = wysokie prawdopodobieństwo bankrutctwa
+
+```{r}
+altmanmodel <- rbind(nauka, testowe)
+altmanmodel <- altmanmodel[,c(3,6,7,8,9,65)]
+altmanmodel <- as.data.frame(lapply(altmanmodel, as.numeric))
+colnames(altmanmodel) <- c("X1", "X2", "X3", "X4", "X5", "X6")
+
+altmanmodel <- as.data.frame(lapply(altmanmodel, function(x) {
+  x[is.na(x)] <- median(x, na.rm = TRUE)  
+  return(x)
+}))
+
+altmanmodel<- altmanmodel%>%
+  mutate(Z_score = 1.2*X1 + 1.4*X2 + 3.3*X3 + 0.6*X4+0.99*X5)
+```
+
+Na poniższym wykresie zilustrowano uzyskane wartości Z, gdzie pomiędzy dwoma pionowymi różowymi liniami zawiera się szara strefa. Wyniki są dosyć skondensowane wokół i wewnątrz szarej strefy, co wskazuje na wiele przypadków trudnych do rozstrzygnięcia. Warto wspomnieć również, że wykres uwidacznia kilka ekstremalnych wartości Z, z których najdalsza to -250.
+
+```{r}
+altmanmodel%>%
+  ggplot()+
+  geom_boxplot(aes(y = 1, x = Z_score), size = 0.5, color = "#CD1076")+
+  xlim(-25,18)+
+  geom_vline(xintercept = 1.8, color = "grey1", size = 1)+
+  geom_vline(xintercept = 3.0, color = "grey1", size = 1)+
+  annotate(
+    "rect", xmin = 1.8, xmax = 3, ymin = 0.6, ymax = 1.4,
+    fill = "grey1", alpha = 0.2) +
+  theme_light(base_size = 18)+
+  labs ( y = "", x = "Z_Score")
+```
+
+Suma spółek w grupach ustalonych za pomocą modelu Altmana została zilustrowana na poniższym wykresie.
+
+U - Spółki upadłe, NU - Spółki nieupadłe, SS - Szara strefa
+
+```{r}
+altmanmodel <- altmanmodel%>%
+  mutate(Wynik = ifelse(Z_score <1.8, "U", ifelse(Z_score<3.0, "SS", "NU")))
+
+counts1 <- data.frame(Stan = names(table(altmanmodel$Wynik)), Count = as.vector(table(altmanmodel$Wynik)))
+
+ggplot(counts1, aes(x = Stan, y = Count, fill = Stan)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_fill_manual(values = c("orange", "grey", "#CD1076")) +
+  labs(x = "", y = "Wielkość grupy", title = "") +
+  theme_minimal(base_size = 18) +
+  theme(legend.position = "none")
+
+```
+
+Tak jak wcześniej zostało wspomnianie, sytacja dużej ilości spółek nie została rozstrzygnieta co jest problemem dla takiego modelu. Poniżej zaprezentowano wyniki dla dokładności modelu. 
+
+```{r}
+
+#zywe = 0 , upadle = 1
+
+altmanmodel <- altmanmodel%>%
+  mutate(Dokladnosc = ifelse(Wynik=="U" & X6 == 1,"UU", ifelse(Wynik=="NU" & X6 == 0, "NUNU", ifelse(Wynik=="NU" & X6 == 1, "UNU", ifelse(Wynik=="U" & X6 == 0, "NUU", ifelse(Wynik=="SS" & X6 == 0, "NUSS", "USS"))))))
+
+counts2 <- data.frame(Rzeczywistość = c("Nieupadła", "Nieupadła", "Nieupadła", "Upadła", "Upadła", "Upadła"),Prognoza= c("Nieupadła", "Szara strefa", "Upadła", "Nieupadła", "Szara strefa", "Upadła"), Ilość = as.vector(table(altmanmodel$Dokladnosc)))
+counts2
+```
+
+Zaliczając „wrzucenie” spółki do szarej strefy jako niepoprawną kwalifikację, dokładność modelu wynosi jedynie **57%**, co jest bardzo niskim wynikiem. Jeżeli pominiemy spółki zakwalifikowane do szarej strefy, to dokładność modelu wzrasta do **70%**, co nadal jest niezadowalającym wynikiem. Altman w swoim badaniu uzyskał dopasowanie około 95% dla spółek, dla których zbudował model. W tak ważnej kwestii jak ocena ryzyka kredytowego, zdecydowanie będą potrzebne metody dające bardziej obiecujące wyniki.
+
+***
+
+## Wnioski
+
+***
+
+Model Altmana, choć genialny na swoje czasy, aktualnie dla polskiego rynku okazał się niewystarczający. Może to wynikać ze zbyt ogólnej postaci modelu – zmienne diagnostyczne i współczynniki dobrane przez Altmana nie będą dobrze dopasowane do spółek ze wszystkich rynków, ponieważ zostały wyestymowane na bardzo skromnej grupie spółek z jednego rynku. Dodatkowo warto wspomnieć, że dane, na których był budowany model, zdecydowanie można uznać już za przestarzałe i nieoddające realiów „życia” współczesnych spółek. Jednakże sama logika i sposób wyestymowania modelu nadal pozostają wysoce interesujące. Dlatego postanowiłam spróbować własnych sił w tej dziedzinie i stworzyć model Tutsona.
+
+***
+
+# Model Tutsona
+
+***
+
+Model Tutsona to narzędzie analityczne, które zostało stworzone przezmnie z wykorzystaniem podejścia do liniowej analizy dyskryminacyjnej w kontekście polskich spółek. Nazwa modelu nie jest przypadkowa – została nadana na cześć prawdziwego mistrza motywacji, niekwestionowanego eksperta od zarządzania stresem oraz niezrównanego specjalisty od… drzemek w promieniach słońca. Tak, mowa o Tutku, tłustym kocie, który nie tylko wspierał swoją obecnością, ale także inspirował do tworzenia przełomowych rozwiązań w dziedzinie finansów i giełdy.
+
+Dzięki jego niezachwianej wierze w sukces (oraz umiejętnościom przesiadywania na klawiaturze w kluczowych momentach), Model Tutsona stał się dla mnie symbolem połączenia naukowej precyzji z kocią mądrością. To nie tylko narzędzie analityczne – to hołd dla prawdziwej legendy, która udowadnia, że nawet największe wyzwania można pokonać z odrobiną kociej filozofii  porządnej drzemki. 
+
+```{r}
+knitr::include_graphics("C:/Users/olgas/OneDrive/Documents/GitHub/Quantative-risk-models-summit/WhatsApp Image 2025-03-06 at 09.54.51_3e79e9e8.jpg")
+```
+
+***
+
+## Zmienne objaśniające
+
+***
+
+W modelu stworzonym za pomoca funkcji `lda()`, użyto wszytkich zmiennych z tabeli (64), chociaż niektóre z nich mają bardzo niskie współczynniki. Postanowiłam wykorzystać nwszytskie zmienne ponieważ wyniki z tylko 5 z modelu Altmana były jeszcze bardziej rozczarowywujące.
+
+```{r}
+library(MASS)
+library(caret)
+
+nauka <- as.data.frame(lapply(nauka, as.numeric))
+testowe <- as.data.frame(lapply(testowe, as.numeric))
+
+nauka <- as.data.frame(lapply(nauka, function(x) {
+  x[is.na(x)] <- median(x, na.rm = TRUE)  
+  return(x)
+}))
+
+testowe <- as.data.frame(lapply(testowe, function(x) {
+  x[is.na(x)] <- median(x, na.rm = TRUE)  
+  return(x)
+}))
+
+
+
+model_lda <- lda(X0 ~ ., data = nauka)
+
+predictions <- predict(model_lda, newdata = testowe[,1:64])
+
+
+```
+
+***
+
+## Wyniki 
+
+***
+
+Model zbudowany na zbiorze uczącym, został przetestowany na zbiorze testowym. Wyniki tego procesu zaprezentowano w ponizszej macierzy błędów.
+
+
+```{r}
+# upadłe  - 1 # żywe - 0
+confusion_matrix <- table(testowe$X0, predictions$class)
+matrixc <- data.frame(c(37,15), c(13,35))
+colnames(matrixc) <- c( "Nie upadłe", "Upadłe")
+rownames(matrixc) <- c( "Nie upadłe", "Upadłe")
+
+matrixc
+
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+
+```
+
+Dokładnośc modelu Tutsona plasuje sie na wysokości **72%**, co czyni go nieznacznie lepszym od modelu Altmana.Taki wynik nadal pozostaje niewystarczający, a liniowa analiza dyskryminacyjna okazuje się nienajlepszym podejściem do zagadnienia ryzyka kredytowego.
+
+***
+
+## Wnioski
+
+***
+
+Pomimo majestatyczności Tutka, i jego wielkiego wsparcia przy tworzeniu modelu, wyniki pozostają niezadowalające. W każdym razie, obydwoje jesteśmy z siebie dumni i cieszymy się że spróbowaliśmy
+
+***
+
+# Bibliografia
+
+***
+
+Tutek, T. (2023). "Miau a ryzyko rynkowe: Jak liniowa analiza dyskryminacyjna może przewidzieć upadłość spółek, gdy kot śpi na klawiaturze". Wydawnictwo Kocie Myśli, Warszawa.
+
+Tutek, T. (2022). "Kocia perspektywa na analizę dyskryminacyjną: Dlaczego zmienne kategoryczne są jak pudełka, a ciągłe jak długie drzemki". Journal of Feline Finance, Tom 9, Nr 3, ss. 45-67.
+
+Tutek, T. & Whiskers, M. (2021). "Ryzyko rynkowe a kocia intuicja: Jak analiza dyskryminacyjna może pomóc w unikaniu inwestycji w niezbyt smaczne spółki". International Journal of Catonomics, Tom 15, Nr 2, ss. 112-130.
+
+Tutek, T. (2020). "Liniowa analiza dyskryminacyjna w praktyce: Jak koty mogą pomóc w optymalizacji portfela inwestycyjnego". Kwartalnik Finansów i Kocich Drzemek, Tom 7, Nr 4, ss. 88-102.
+
+Tutek, T. (2019). "Koty, ryzyko rynkowe i analiza dyskryminacyjna: Przewodnik po tym, jak nie dać się zjeść przez rynek". Wydawnictwo Kocie Finanse, Kraków.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
