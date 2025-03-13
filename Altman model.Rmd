@@ -280,7 +280,7 @@ knitr::include_graphics("C:/Users/olgas/OneDrive/Documents/GitHub/Quantative-ris
 
 ***
 
-W modelu stworzonym za pomoca funkcji `lda()`, użyto wszytkich zmiennych z tabeli (64), chociaż niektóre z nich mają bardzo niskie współczynniki. Postanowiłam wykorzystać nwszytskie zmienne ponieważ wyniki z tylko 5 z modelu Altmana były jeszcze bardziej rozczarowywujące.
+W modelu stworzonym za pomoca funkcji `lda()`, użyto wszytkich zmiennych z modelu Altmana.
 
 ```{r}
 library(MASS)
@@ -301,13 +301,29 @@ testowe <- as.data.frame(lapply(testowe, function(x) {
 
 
 
-model_lda <- lda(X0 ~ ., data = nauka)
+model_lda <- lda(X0 ~ ., data = nauka[, c(3,6,7,8,9,65)])
 
-predictions <- predict(model_lda, newdata = testowe[,1:64])
+predictions <- predict(model_lda, newdata = testowe[,c(3,6,7,8,9)])
+
 
 
 ```
 
+Postać modelu Tutsona:
+
+$$
+Z = -0.064X_1 -0.092X_2 + 0.084X_3 -0.13X_4 + 0.29X_5
+$$
+
+Postac modelu Altmana:
+
+$$
+Z = 1.2X_1 + 1.4X_2 + 3.3X_3 + 0.6X_4 + 0.99X_5
+$$
+
+Pierwszą niezaprzeczalną obserwacja jest to że wszytskie współczynniki dla modelu Tutsona zmalały i to znacznie. Wynika to z dużego nie dopasowania zmiennych objasniających do opisania problemu ryzyka kredytowego na polskim rynku. Dodtakowo w trzech miejsach zmienił się znak współczynnika co wskazuje na zmianę zależności dla polskich spółek. Dla X1 i X2 współczynniki wydają się małoistotne i ta "zmiana zależności" tak naprawde jest nikła, ale w przypadku X4 można już coś napisać. Mianowiecie wyższy wskaźnik - Wartość rynkowa kapitału akcyjnego / Wartość księgowa zadłużenia, dla spółek Altmana oznaczał wyższą wartość Z-score czyli mniejsze prawdopodobieństwo bankrutctwa. w modelu Tutsona jest na odwrót. Wyższy wskaźnik - Wartość rynkowa kapitału akcyjnego / Wartość księgowa zadłużenia, oznacza większą szanse na bankrutctwo. 
+
+Posumowując, widąc że doboór tych pięci zmiennych do liniowej analizy dyskryminacyjnej problemu ryzyka rynkowego dla polskich spółek jest conajmniej słaby.
 ***
 
 ## Wyniki 
@@ -320,7 +336,7 @@ Model zbudowany na zbiorze uczącym, został przetestowany na zbiorze testowym. 
 ```{r}
 # upadłe  - 1 # żywe - 0
 confusion_matrix <- table(testowe$X0, predictions$class)
-matrixc <- data.frame(c(37,15), c(13,35))
+matrixc <- data.frame(c(32,22), c(18,28))
 colnames(matrixc) <- c( "Nie upadłe", "Upadłe")
 rownames(matrixc) <- c( "Nie upadłe", "Upadłe")
 
@@ -328,9 +344,10 @@ matrixc
 
 accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
 
+
 ```
 
-Dokładnośc modelu Tutsona plasuje sie na wysokości **72%**, co czyni go nieznacznie lepszym od modelu Altmana.Taki wynik nadal pozostaje niewystarczający, a liniowa analiza dyskryminacyjna okazuje się nienajlepszym podejściem do zagadnienia ryzyka kredytowego.
+Dokładnośc modelu Tutsona plasuje sie na wysokości **60%**, co czyni go gorszym nawet od modelu Altmana.Taki wynik również pozostaje niewystarczający, a liniowa analiza dyskryminacyjna okazuje się nienajlepszym podejściem do zagadnienia ryzyka kredytowego.
 
 ***
 
