@@ -125,7 +125,6 @@ stopy_zwrotu_long$Year <- as.numeric(gsub("Year", "", stopy_zwrotu_long$Year))
   ) +
   theme_minimal(base_size = 18) +
   scale_x_continuous(breaks = 1:4, labels = c("Year 1", "Year 2", "Year 3", "Year 4")) +  
-  scale_y_continuous(limits = c(0, 16)) +
    scale_color_manual(values = c("A" = "#CD1076", "B" = "orange", "CCC" = "#2ca02c")) # Zakres osi Y
  
 
@@ -193,6 +192,20 @@ Powyższy opis danych udowadnia że do badania przyjęto obligacje skarbowe, kt�
 
 Symulację przeprowadzono dla powyżej wymienionych danych. Symulacja została powtórzona 1000 razy. Następnie obliczono VaR i ES dla 99.9% pewność. W tym celu wyznaczono odpowiedni kwantyl z rozkładu scenariuszy wartości portfela, uzyskanych z symulacji. Dodatkowo, jako że jedna z obligacji jest 5-cio letnia, potrzebna była estymacja stóp zwrotu na rok 5. Dokonano tego poprzez dodanie/odjęcie przeciętnego tępna wzrostu/spadku stóp zwrotu przeciętnych obligacji skarbowych. W celu dokładniejszego poznania techniki zachęcam do zajrzenia do kodu.
 
+Wartośc bieżącą obligacji obliczono za pomocą poniższego wzoru
+
+$PV = \sum_{t=1}^{T} \frac{K}{(1 + YTM)^t} + \frac{C}{(1 + YTM)^T}$
+
+Gdzie:
+
+* YTM to stopa zwroyu z odpowiedniego okresu
+
+* K to kupon
+
+* C to cena wykupu
+
+* T to czas trwania obligacji
+
 ```{r}
 
 # Pierwszy krok -> wylosowanie 1000 scenariuszy z wielowymiarowego rozkładu normalnego 
@@ -230,7 +243,7 @@ progi <- thresholds(tran_cumsum)
 # Czwarty krok -> Przypisanie ratingu do wylosowanych scenariuszy
 
 initial_ratings <- c(3,6,7)
-rating_labels <- c("AAA", "AA", "A", "BBB", "BB", "B", "CCC") 
+rating_labels <- c("AAA", "AA", "A", "BBB", "BB", "B", "CCC", "D") 
 
 assign_ratings <- function(z_scenarios, thresholds, rating_labels, initial_rating){
   n_sim <- nrow(z_scenarios)
@@ -250,11 +263,37 @@ assign_ratings <- function(z_scenarios, thresholds, rating_labels, initial_ratin
 
 sim2 <- assign_ratings(sim11, progi, rating_labels, initial_rating )
 
+
 # Piąty krok -> Obliczenie wartości portfela 
 
-stopy_zwrotu$Year5 <- c(0.059, 0.095, 0.013)
+war_obligacja <- function(C, K, T, YTM) {
+  if (length(YTM) != T) {
+    print(YTM)
+    stop("Długość wektora YTM musi być równa liczbie lat T.")
+    
+  }
+  PV <- 0
+  
+  for (t in 1:T) {
+    PV <- PV + K / (1 + YTM[t])^t
+  }
+  PV <- PV + C / (1 + YTM[T])^T
+  return(PV)
+}
 
-value_bonds <- function(simulated_ratings, obligacje, stopy_zwrotu, recovery_rates) {
+stopy_zwrotu <- data.frame(
+  Rating = c("AAA", "AA", "A", "BBB", "BB", "B", "CCC"),
+  Year1 = c(3.60, 3.65, 3.72, 4.10, 5.55, 6.05, 15.05),
+  Year2 = c(4.17, 4.22, 4.32, 4.67, 6.02, 7.02, 15.02),
+  Year3 = c(4.73, 4.78, 4.93, 5.25, 6.78, 8.03, 14.03),
+  Year4 = c(5.12, 5.17, 5.32, 5.63, 7.27, 8.52, 13.52),
+  Year5 = c(5.50, 5.55, 5.70, 6.00, 7.75, 9.00, 13.00)  # Oszacowane wartości
+)
+
+stopy_zwrotu[,2:6] <- stopy_zwrotu[,2:6]/100
+
+
+war_portfel <- function(simulated_ratings, obligacje, stopy_zwrotu, recovery_rates) {
   n_sim <- nrow(simulated_ratings)
   n_bonds <- ncol(simulated_ratings)
   bond_values <- matrix(NA, nrow = n_sim, ncol = n_bonds)
@@ -262,16 +301,22 @@ value_bonds <- function(simulated_ratings, obligacje, stopy_zwrotu, recovery_rat
     for (j in 1:n_bonds) {
       rating_now <- simulated_ratings[i, j]  
       bond_info <- obligacje[j, ]  
-      recovery_rate <- ifelse(rating_now == "D",recovery_rates$stopa[recovery_rates$typ == obligacje$typ[j]],NA)  
+      recovery_rate <- ifelse(rating_now == "D",recovery_rates$stopa[recovery_rates$klasa == obligacje$typ[j]],NA)  
 
       if (!is.na(recovery_rate)) {
-        bond_values[i, j] <- obligacje$cena_wykupu[j] * recovery_rates$stopa[recovery_rates$typ == obligacje$typ[j]]
+        
+        r <- recovery_rates %>%
+          filter(klasa == obligacje$typ[j])
+        
+        
+        bond_values[i, j] <- obligacje$cena_wykupu[j] * (1+r$stopa) # Jezeli D to stopa odzysku
       } else {
+        YTM <- stopy_zwrotu %>%
+          filter( Rating == obligacje$rating[j])
         
-        s <- stopy_zwrotu%>%
-          filter(Rating == rating_now)
+        print(YTM)
         
-      bond_values[i, j] <- obligacje$cena_wykupu[j] * (1 + s[1,obligacje$czas_trwania[j] + 1])
+        bond_values[i, j] <- war_obligacja(obligacje$cena_wykupu[j], obligacje$kupon[j], obligacje$czas_trwania[j], as.vector(YTM[,2:obligacje$czas_trwania[j]+2])) # NAPRAWIĆ ZAKRES BO SIĘ P{IERDOLU}
       }
     }
   }
@@ -279,48 +324,19 @@ value_bonds <- function(simulated_ratings, obligacje, stopy_zwrotu, recovery_rat
   return(bond_values)  
 }
 
-value_bonds(sim2,obligacje,stopy_zwrotu, recovery_rates)
-
-obligacje$czas_trwania[1]
-    sim2[1, 1]
-```
+sim3 <-war_portfel(sim2,obligacje,stopy_zwrotu, recovery_rate)
 
 
-```{r}
+
+sim3
 
 
-stopy_zwrotu$Year5 <- c(5.9, 9.5, 13.0)
-
-portfel_symulacja <- function(ratings, obligacje, cor_matrix, n_sim, recovery_rate, stopy_zwrotu) {
-  portfolio_values <- numeric(n_sim)
-  for (i in 1:n_sim) {
-    changes <- mvrnorm(1, mu = rep(0, nrow(obligacje)), Sigma = cor_matrix)
-    values <- numeric(nrow(obligacje))
-    for (j in 1:nrow(obligacje)) {
-      
-      current_rating <- ratings[i, j]
-      czas_do_wykupu <- as.numeric(obligacje$czas_do_wykupu[j])
-      stopa_zwrotu_1 <- stopy_zwrotu%>%
-        filter(Rating==current_rating)
-       stopa_zwrotu <- stopa_zwrotu_1[,1+czas_do_wykupu]
-       print(stopa_zwrotu)       
   
-      if (current_rating == "D") {  
-       values[j] <- obligacje$cena_wykupu[j] * recovery_rate[recovery_rate$klasa == "subordinated",2]
-      } else {
-        values[j] <- obligacje$cena_wykupu[j] * (1 + stopa_zwrotu)
-      }
-    }
-    portfolio_values[i] <- sum(values)
-  }
-  return(portfolio_values)
-}
-
-
-
-
-
+  obligacje$czas_trwania[1]
 ```
+
+
+
 
 
 
