@@ -186,11 +186,11 @@ Powyższy opis danych udowadnia że do badania przyjęto obligacje skarbowe, kt�
 
 ***
 
-# Wyniki 
+# Skorelowane inwestycje
 
 ***
 
-Symulację przeprowadzono dla powyżej wymienionych danych. Symulacja została powtórzona 1000 razy. Następnie obliczono VaR i ES dla 99.9% pewność. W tym celu wyznaczono odpowiedni kwantyl z rozkładu scenariuszy wartości portfela, uzyskanych z symulacji. Dodatkowo, jako że jedna z obligacji jest 5-cio letnia, potrzebna była estymacja stóp zwrotu na rok 5. Dokonano tego poprzez dodanie/odjęcie przeciętnego tępna wzrostu/spadku stóp zwrotu przeciętnych obligacji skarbowych. W celu dokładniejszego poznania techniki zachęcam do zajrzenia do kodu.
+Symulację przeprowadzono dla powyżej wymienionych danych. Symulacja została powtórzona 1000 razy. Następnie obliczono VaR i ES dla 99.9% pewność. W tym celu wyznaczono odpowiedni kwantyl z rozkładu scenariuszy wartości portfela, uzyskanych z symulacji. W celu dokładniejszego poznania techniki zachęcam do zajrzenia do kodu.
 
 Wartośc bieżącą obligacji obliczono za pomocą poniższego wzoru
 
@@ -205,6 +205,17 @@ Gdzie:
 * C to cena wykupu
 
 * T to czas trwania obligacji
+
+Według dokumentacji CreditMetrics, dyskontowi nie podlega kwota w pierwszym roku, tylko w pozostałych. Stąd w tabeli ze stopami zwrotu rozważane są tylko 4 wartości.
+
+***
+
+## Wartości porfela
+
+
+***
+
+Po wykonaniu symualcji otrzymano 10000 wartości portfela. Rozkład tych wartości został zaprezentowany poniżej:
 
 ```{r}
 
@@ -221,7 +232,7 @@ symulacja1 <- function(correlation_matrix, n_sim) {
   return(simulated_data)
 }
 
-sim11 <- symulacja1(cor_matrix, 1000)
+sim11 <- symulacja1(cor_matrix, 10000)
 
 # Drugi krok -> Stworzenie macierzy skumulowanych prawdopodobieństw
 trans <- trans[,2:8]
@@ -272,12 +283,12 @@ war_obligacja <- function(C, K, T, YTM) {
     stop("Długość wektora YTM musi być równa liczbie lat T.")
     
   }
-  PV <- 0
+  PV <- K
   
-  for (t in 1:T) {
-    PV <- PV + K / (1 + YTM[t])^t
+  for (t in 1:T-1) {
+    PV <- PV +(K/ (1 + as.numeric(YTM[t+1]))^t)
   }
-  PV <- PV + C / (1 + YTM[T])^T
+  PV <- PV +(C / (1 + YTM[T])^T)
   return(PV)
 }
 
@@ -303,39 +314,96 @@ war_portfel <- function(simulated_ratings, obligacje, stopy_zwrotu, recovery_rat
       bond_info <- obligacje[j, ]  
       recovery_rate <- ifelse(rating_now == "D",recovery_rates$stopa[recovery_rates$klasa == obligacje$typ[j]],NA)  
 
-      if (!is.na(recovery_rate)) {
+      if (simulated_ratings[i, j] == "D") {
         
         r <- recovery_rates %>%
           filter(klasa == obligacje$typ[j])
         
         
+        
         bond_values[i, j] <- obligacje$cena_wykupu[j] * (1+r$stopa) # Jezeli D to stopa odzysku
-      } else {
+      } 
+      
+      else {
         YTM <- stopy_zwrotu %>%
           filter( Rating == obligacje$rating[j])
+        ytm <- unname(as.numeric(unlist(YTM[1,1:obligacje$czas_trwania[j]+1])))
         
-        print(YTM)
-        
-        bond_values[i, j] <- war_obligacja(obligacje$cena_wykupu[j], obligacje$kupon[j], obligacje$czas_trwania[j], as.vector(YTM[,2:obligacje$czas_trwania[j]+2])) # NAPRAWIĆ ZAKRES BO SIĘ P{IERDOLU}
+        bond_values[i, j] <- war_obligacja(obligacje$cena_wykupu[j], obligacje$kupon[j], obligacje$czas_trwania[j],ytm) 
       }
     }
   }
-  
+  bond_values <- as.data.frame(bond_values)
+  bond_values$Portfel <- rowSums(bond_values)
   return(bond_values)  
 }
 
 sim3 <-war_portfel(sim2,obligacje,stopy_zwrotu, recovery_rate)
 
+sim3 %>%
+  ggplot()+
+  geom_density(aes(x = Portfel), size = 1, color = "#CD1076" ) +
+theme_light ( base_size = 18)+
+  labs(y = NULL, x = "Wartość portfela")
 
 
-sim3
 
-
-  
-  obligacje$czas_trwania[1]
 ```
 
+Jak widać na wykresie, wartości potfela znajdują się w przedziale około od 21000 do 23000, oraz zdecydowana większość "portfeli" ma wartośc z dolnego końca przedziału.
 
+
+***
+
+## Value at risk, oraz Estimated Shortfall
+
+
+***
+
+Ostatecznym krokiem jest wyznaczenie odpowiedniego kwantyla, z zasymulowanego rozkładu. Dla przyjetych założeń w badaniu 99.9% Var i Es wyszły na wysokości: 
+
+```{r}
+VaR <- quantile(sim3$Portfel, 0.999)
+ES <- mean(sim3$Portfel[sim3$Portfel >=VaR])
+
+wyniki <- data.frame(VaR, ES)
+colnames(wyniki) <- c("VaR", "ES")
+wyniki
+```
+
+***
+
+# Nieskorelowane inwestycje
+
+***
+
+Następnym krokiem w badaniu jest uzuskanie i omówienie wyników, dla portfela w którym inwestycje nie są ze sobą skorelowane. Ta część badania odowłuje się do pojęcia **dyfersyfikacji ryzyka**. 
+
+```{r}
+
+
+cor_matrix <- matrix(c(0, 0, 0,
+                       0, 0, 0,
+                       0, 0, 0), nrow = 3)
+
+p <- as.data.frame(cor_matrix)
+rownames(p) <- c(c("V1", "V2", "V3"))
+
+sim_ns <- symulacja1(cor_matrix, 10000)
+progi_ns <- thresholds(tran_cumsum)
+sim2_ns <- assign_ratings(sim_ns, progi_ns, rating_labels, initial_rating )
+
+sim3_ns <-war_portfel(sim2_ns,obligacje,stopy_zwrotu, recovery_rate)
+
+sim3_ns %>%
+  ggplot()+
+  geom_density(aes(x = Portfel), size = 1, color = "#CD1076" ) +
+theme_light ( base_size = 18)+
+  labs(y = NULL, x = "Wartość portfela")
+  
+
+
+```
 
 
 
