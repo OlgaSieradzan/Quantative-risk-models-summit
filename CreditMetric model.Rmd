@@ -97,7 +97,7 @@ cor_matrix <- matrix(c(1, 0.2, 0.15,
 p <- as.data.frame(cor_matrix)
 rownames(p) <- c(c("V1", "V2", "V3"))
 p
-obligacje
+
 ```
 
 ***
@@ -186,11 +186,9 @@ Powyższy opis danych udowadnia że do badania przyjęto obligacje skarbowe, kt�
 
 ***
 
-# Skorelowane inwestycje
+## Wartośc bierząca obligacji
 
 ***
-
-Symulację przeprowadzono dla powyżej wymienionych danych. Symulacja została powtórzona 1000 razy. Następnie obliczono VaR i ES dla 99.9% pewność. W tym celu wyznaczono odpowiedni kwantyl z rozkładu scenariuszy wartości portfela, uzyskanych z symulacji. W celu dokładniejszego poznania techniki zachęcam do zajrzenia do kodu.
 
 Wartośc bieżącą obligacji obliczono za pomocą poniższego wzoru
 
@@ -208,14 +206,56 @@ Gdzie:
 
 Według dokumentacji CreditMetrics, dyskontowi nie podlega kwota w pierwszym roku, tylko w pozostałych. Stąd w tabeli ze stopami zwrotu rozważane są tylko 4 wartości.
 
+W ponizszej tabeli zaprezentowano obliczoną wartośc bierzącą obligacji, na podstawie wyżej opisanej logiki.
+
+```{r}
+
+stopy_zwrotu <- data.frame(
+  Rating = c("AAA", "AA", "A", "BBB", "BB", "B", "CCC"),
+  Year1 = c(3.60, 3.65, 3.72, 4.10, 5.55, 6.05, 15.05),
+  Year2 = c(4.17, 4.22, 4.32, 4.67, 6.02, 7.02, 15.02),
+  Year3 = c(4.73, 4.78, 4.93, 5.25, 6.78, 8.03, 14.03),
+  Year4 = c(5.12, 5.17, 5.32, 5.63, 7.27, 8.52, 13.52)
+)
+
+stopy_zwrotu[,2:6] <- stopy_zwrotu[,2:5]/100
+
+# obliczenie wartości rzeczywistej obligacji
+fv <- function(cat, n, coupon, bb, sec_type = -1){
+  
+  if(cat == 'D'){
+    sumFv <- bb*as.numeric(recovery_rate[recovery_rate$klasa == sec_type,2])
+    return(sumFv)
+  }
+  
+  rr_v <- as.numeric(stopy_zwrotu[stopy_zwrotu$Rating == cat, 2:n])
+  sumFv = coupon
+  sumFv = sumFv + sum(coupon/(1+ rr_v)^(1:(n-1)))
+  sumFv = sumFv + bb/(1+rr_v[n-1])^(n-1)
+  return(sumFv)
+}
+
+categories <- stopy_zwrotu$Rating
+categories <- c(categories, 'D')
+obl1 <- sapply(categories, function(cat) fv(cat, n = 3, coupon = 0, bb = 100000, sec_type = "subordinated"))
+obl2 <- sapply(categories, function(cat) fv(cat, n = 5, coupon = 5000, bb = 50000, sec_type = "senior secured"))
+obl3 <- sapply(categories, function(cat) fv(cat, n = 2, coupon = 10000, bb = 50000, sec_type = "senior unsecured"))
+
+oblVal <- data.frame(category = categories, obl1 = obl1, obl2 = obl2, obl3 = obl3)
+colnames(oblVal) <- c("Rating", "V1", "V2", "V3")
+oblVal[,2:4]
+
+```
+
+
 ***
 
-## Wartości porfela
-
+# Skorelowane inwestycje
 
 ***
 
-Po wykonaniu symualcji otrzymano 10000 wartości portfela. Rozkład tych wartości został zaprezentowany poniżej:
+Symulację przeprowadzono dla powyżej wymienionych danych. Symulacja została powtórzona 10000 razy. Następnie obliczono VaR i ES dla 99.9% pewność. W tym celu wyznaczono odpowiedni kwantyl z rozkładu scenariuszy wartości portfela, uzyskanych z symulacji. W celu dokładniejszego poznania techniki zachęcam do zajrzenia do kodu.
+
 
 ```{r}
 
@@ -277,80 +317,79 @@ sim2 <- assign_ratings(sim11, progi, rating_labels, initial_rating )
 
 # Piąty krok -> Obliczenie wartości portfela 
 
-war_obligacja <- function(C, K, T, YTM) {
-  if (length(YTM) != T) {
-    print(YTM)
-    stop("Długość wektora YTM musi być równa liczbie lat T.")
-    
-  }
-  PV <- K
-  
-  for (t in 1:T-1) {
-    PV <- PV +(K/ (1 + as.numeric(YTM[t+1]))^t)
-  }
-  PV <- PV +(C / (1 + YTM[T])^T)
-  return(PV)
-}
-
-stopy_zwrotu <- data.frame(
-  Rating = c("AAA", "AA", "A", "BBB", "BB", "B", "CCC"),
-  Year1 = c(3.60, 3.65, 3.72, 4.10, 5.55, 6.05, 15.05),
-  Year2 = c(4.17, 4.22, 4.32, 4.67, 6.02, 7.02, 15.02),
-  Year3 = c(4.73, 4.78, 4.93, 5.25, 6.78, 8.03, 14.03),
-  Year4 = c(5.12, 5.17, 5.32, 5.63, 7.27, 8.52, 13.52),
-  Year5 = c(5.50, 5.55, 5.70, 6.00, 7.75, 9.00, 13.00)  # Oszacowane wartości
-)
-
-stopy_zwrotu[,2:6] <- stopy_zwrotu[,2:6]/100
-
-
-war_portfel <- function(simulated_ratings, obligacje, stopy_zwrotu, recovery_rates) {
+war_portfel <- function(simulated_ratings, obligacje, wartosc_rzecz) {
   n_sim <- nrow(simulated_ratings)
   n_bonds <- ncol(simulated_ratings)
   bond_values <- matrix(NA, nrow = n_sim, ncol = n_bonds)
   for (i in 1:n_sim) {
     for (j in 1:n_bonds) {
-      rating_now <- simulated_ratings[i, j]  
-      bond_info <- obligacje[j, ]  
-      recovery_rate <- ifelse(rating_now == "D",recovery_rates$stopa[recovery_rates$klasa == obligacje$typ[j]],NA)  
-
-      if (simulated_ratings[i, j] == "D") {
-        
-        r <- recovery_rates %>%
-          filter(klasa == obligacje$typ[j])
-        
-        
-        
-        bond_values[i, j] <- obligacje$cena_wykupu[j] * (1+r$stopa) # Jezeli D to stopa odzysku
-      } 
       
-      else {
-        YTM <- stopy_zwrotu %>%
-          filter( Rating == obligacje$rating[j])
-        ytm <- unname(as.numeric(unlist(YTM[1,1:obligacje$czas_trwania[j]+1])))
-        
-        bond_values[i, j] <- war_obligacja(obligacje$cena_wykupu[j], obligacje$kupon[j], obligacje$czas_trwania[j],ytm) 
-      }
+      rating_now <- simulated_ratings[i, j]  
+      
+      bond_values[i, j] <- wartosc_rzecz[wartosc_rzecz$Rating == rating_now,j+1]
     }
   }
   bond_values <- as.data.frame(bond_values)
   bond_values$Portfel <- rowSums(bond_values)
   return(bond_values)  
+  
 }
 
-sim3 <-war_portfel(sim2,obligacje,stopy_zwrotu, recovery_rate)
+```
+
+***
+
+## Wyniki symulacji
+
+***
+
+Pierwszym etapem symulacji, jest wylosowanie liczb z wielowymiarowego rozkładu normalnego, ustalenie przedziałów prawdopodobieństwa pojawienia się dla kokretnych ratingów. A końcowo przypisanie, według tych ustalonych przedziałów, ratingów konkretnej obligacji. W poniższej tabeli zaprezentowano podsumowanie liczności ratingów każdej obligacji.
+
+
+```{r}
+
+df_counts1 <- as.data.frame(table(factor(sim2$V1, levels = c("AAA", "AA", "A", "BBB", "BB", "B", "CCC", "D"))))
+df_counts2 <- as.data.frame(table(factor(sim2$V2, levels = c("AAA", "AA", "A", "BBB", "BB", "B", "CCC", "D"))))
+df_counts3 <- as.data.frame(table(factor(sim2$V3, levels = c("AAA", "AA", "A", "BBB", "BB", "B", "CCC", "D"))))
+
+df_count <- data.frame(df_counts1, df_counts2$Freq, df_counts3$Freq)
+
+colnames(df_count) <- c("Rating", "A", "B", "CCC")
+
+df_count
+
+```
+
+Oczywiście, najczęśćiej Rating pozostaje taki sam, lub zmienia się o jeden rating w góre/w dół. Warto zauważyć że obligacja o ratingu CCC, nigdy nie osiągają żadnego ratingu A, oraz obligacja o ratingu A, nigdy nie osiągneła ratingu D.
+
+
+
+
+
+***
+
+## Wartości porfela
+
+
+***
+
+Kolejnym etapem jest przypisanie wartości bierzącej każdej obligacji według jej ratingu uzyskanym w symulacji. Oraz osteteczne zsumowanie wartości całego portfela. Poniżej zaprezentowano rozkład 10000 wartości portfeli.
+
+```{r}
+
+
+sim3 <-war_portfel(sim2,obligacje, oblVal)
 
 sim3 %>%
   ggplot()+
   geom_density(aes(x = Portfel), size = 1, color = "#CD1076" ) +
 theme_light ( base_size = 18)+
-  labs(y = NULL, x = "Wartość portfela")
-
-
+  xlim(125000, 220000)+
+  labs(y = NULL, x = "Wartość portfela [USD]")
 
 ```
 
-Jak widać na wykresie, wartości potfela znajdują się w przedziale około od 21000 do 23000, oraz zdecydowana większość "portfeli" ma wartośc z dolnego końca przedziału.
+Jak widać na wykresie, wartości potfela znajdują się w szerokim przedziale, oraz zdecydowana większość "portfeli" ma wartośc z górnego końca przedziału.
 
 
 ***
@@ -360,16 +399,34 @@ Jak widać na wykresie, wartości potfela znajdują się w przedziale około od 
 
 ***
 
-Ostatecznym krokiem jest wyznaczenie odpowiedniego kwantyla, z zasymulowanego rozkładu. Dla przyjetych założeń w badaniu 99.9% Var i Es wyszły na wysokości: 
+Ostatecznym krokiem jest wyznaczenie odpowiedniego kwantyla, z rozkładu starty portfela. Na ponizszym wykresie zwizualizowano rozkład starty oraz kwantyl 0.01. 
 
 ```{r}
-VaR <- quantile(sim3$Portfel, 0.999)
-ES <- mean(sim3$Portfel[sim3$Portfel >=VaR])
 
-wyniki <- data.frame(VaR, ES)
-colnames(wyniki) <- c("VaR", "ES")
-wyniki
+sim3 <- sim3 %>%
+  mutate(Strata = Portfel -  sum(91889.28,57703.51,62151.24))
+
+var = quantile(sim3$Strata, 0.01)
+
+sim3 %>%
+  ggplot()+
+  geom_density(aes(x = Strata), size = 1, color = "black" ) +
+  geom_vline(xintercept = var, size = 0.6, color = "#CD1076", linetype = "dashed")+
+theme_light ( base_size = 18)+
+  labs(y = NULL, x = "Różnica w wartości portfela [USD]")
+
 ```
+
+Var wyznaczony jako 0.01 kwantyl powyższego rozkładu, oraz ES jako średnia z wartości niższych wyszły następująco:
+
+```{r}
+wer <- data.frame("VaR" = (-1)*var, "ES" = (-1)*mean(sim3$Strata[sim3$Strata<var]))
+wer
+```
+
+Oznacza to że infestor posiadający taki portfel, na 99% nie straci więcej niż 67 389 USD, jednak w przypadku przekroczenia tej stary, przecietnie traciłby 68598.77 USD.
+
+
 
 ***
 
@@ -380,30 +437,34 @@ wyniki
 Następnym krokiem w badaniu jest uzuskanie i omówienie wyników, dla portfela w którym inwestycje nie są ze sobą skorelowane. Ta część badania odowłuje się do pojęcia **dyfersyfikacji ryzyka**. 
 
 ```{r}
+cor_matrix <- matrix(c(1, 0, 0,
+                       0, 1, 0,
+                       0, 0, 1), nrow = 3)
+sim1_ns <- symulacja1(cor_matrix, 10000)
+sim2_ns <- assign_ratings(sim1_ns, progi, rating_labels, initial_rating )
+sim3_ns <-war_portfel(sim2_ns,obligacje, oblVal)
+
+sim3_ns <- sim3_ns %>%
+  mutate(Strata = Portfel -  sum(91889.28,57703.51,62151.24))
+
+var_ns = quantile(sim3_ns$Strata, 0.01)
 
 
-cor_matrix <- matrix(c(0, 0, 0,
-                       0, 0, 0,
-                       0, 0, 0), nrow = 3)
-
-p <- as.data.frame(cor_matrix)
-rownames(p) <- c(c("V1", "V2", "V3"))
-
-sim_ns <- symulacja1(cor_matrix, 10000)
-progi_ns <- thresholds(tran_cumsum)
-sim2_ns <- assign_ratings(sim_ns, progi_ns, rating_labels, initial_rating )
-
-sim3_ns <-war_portfel(sim2_ns,obligacje,stopy_zwrotu, recovery_rate)
-
-sim3_ns %>%
   ggplot()+
-  geom_density(aes(x = Portfel), size = 1, color = "#CD1076" ) +
+  geom_density(data = sim3, aes(x = Strata, color = "Skorelowane"), size = 1 ) +
+  geom_density(data = sim3_ns, aes(x = Strata, color = "Nieskorelowane"), size = 1 ) +
 theme_light ( base_size = 18)+
-  labs(y = NULL, x = "Wartość portfela")
-  
-
-
+   scale_color_manual(values = c("Skorelowane" = "black", "Nieskorelowane" = "grey56"))+
+  labs(y = NULL, x = "Różnica w wartości portfela [USD]", color = NULL)
 ```
+Pomimo tego że rozkłady mogą sie wydawac podobne, to różnicę widać w wartościach indeksów ryzyka.
+
+```{r}
+ wer[2,] = c((-1)*var_ns,(-1)*mean(sim3_ns$Strata[sim3_ns$Strata<var]))
+wer
+```
+
+
 
 
 
