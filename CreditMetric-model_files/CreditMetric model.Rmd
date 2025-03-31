@@ -1,5 +1,5 @@
 ---
-title: "CreditMetric_model"
+title: "CreditMetric model"
 author: "Olga Sieradzan"
 date: "2025-03-13"
 output: 
@@ -259,6 +259,8 @@ Symulację przeprowadzono dla powyżej wymienionych danych. Symulacja została p
 
 ```{r}
 
+set.seed(123)
+
 # Pierwszy krok -> wylosowanie 1000 scenariuszy z wielowymiarowego rozkładu normalnego 
 symulacja1 <- function(correlation_matrix, n_sim) {
 
@@ -399,14 +401,14 @@ Jak widać na wykresie, wartości potfela znajdują się w szerokim przedziale, 
 
 ***
 
-Ostatecznym krokiem jest wyznaczenie odpowiedniego kwantyla, z rozkładu starty portfela. Na ponizszym wykresie zwizualizowano rozkład starty oraz kwantyl 0.01. 
+Ostatecznym krokiem jest wyznaczenie odpowiedniego kwantyla, z rozkładu starty portfela. Na ponizszym wykresie zwizualizowano rozkład starty oraz kwantyl 0.001. 
 
 ```{r}
 
 sim3 <- sim3 %>%
   mutate(Strata = Portfel -  sum(91889.28,57703.51,62151.24))
 
-var = quantile(sim3$Strata, 0.01)
+var = quantile(sim3$Strata, 0.001)
 
 sim3 %>%
   ggplot()+
@@ -417,14 +419,15 @@ theme_light ( base_size = 18)+
 
 ```
 
-Var wyznaczony jako 0.01 kwantyl powyższego rozkładu, oraz ES jako średnia z wartości niższych wyszły następująco:
+Var wyznaczony jako 0.001 kwantyl powyższego rozkładu, oraz ES jako średnia z wartości niższych wyszły następująco:
 
 ```{r}
 wer <- data.frame("VaR" = (-1)*var, "ES" = (-1)*mean(sim3$Strata[sim3$Strata<var]))
+rownames(wer) <- c("0.001")
 wer
 ```
 
-Oznacza to że infestor posiadający taki portfel, na 99% nie straci więcej niż 67 389 USD, jednak w przypadku przekroczenia tej stary, przecietnie traciłby 68598.77 USD.
+Oznacza to że infestor posiadający taki portfel, na 99.9% nie straci więcej niż 67 389 USD, jednak w przypadku przekroczenia tej stary, przecietnie traciłby 68598.77 USD.
 
 
 
@@ -447,7 +450,7 @@ sim3_ns <-war_portfel(sim2_ns,obligacje, oblVal)
 sim3_ns <- sim3_ns %>%
   mutate(Strata = Portfel -  sum(91889.28,57703.51,62151.24))
 
-var_ns = quantile(sim3_ns$Strata, 0.01)
+var_ns = quantile(sim3_ns$Strata, 0.001)
 
 
   ggplot()+
@@ -457,20 +460,122 @@ theme_light ( base_size = 18)+
    scale_color_manual(values = c("Skorelowane" = "black", "Nieskorelowane" = "grey56"))+
   labs(y = NULL, x = "Różnica w wartości portfela [USD]", color = NULL)
 ```
-Pomimo tego że rozkłady mogą sie wydawac podobne, to różnicę widać w wartościach indeksów ryzyka.
+
+Portfele charakteryzują się wysokim podobieństwem rozkładów, jednak różnice uwidaczniają się w wartościach wskaźników ryzyka. Portfel składający się z nieskorelowanych inwestycji odznacza się niższymi stratami zarówno w przypadku wartości zagrożonej (VaR), jak i oczekiwanej straty (ES). Jest to bezpośredni efekt zastosowanej dywersyfikacji. Obligacje w tym portfelu są nieskorelowane, co oznacza, że zmiany ich ratingów (zarówno poprawa, jak i pogorszenie) są od siebie niezależne. W praktyce oznacza to, że w przypadku spadku wartości jednej z obligacji, nie ma żadnych przesłanek wskazujących na to, że podobna sytuacja wystąpi w przypadku pozostałych obligacji w portfelu.
 
 ```{r}
- wer[2,] = c((-1)*var_ns,(-1)*mean(sim3_ns$Strata[sim3_ns$Strata<var]))
+ wer[2,] = c((-1)*var_ns,(-1)*mean(sim3_ns$Strata[sim3_ns$Strata<var_ns]))
+rownames(wer) <- c("Skorelowane", "Nieskorelowane")
 wer
 ```
 
+***
+
+# Sposoby wyznaczania korelacji w modelu
+
+***
+
+Oczywiście, w normlanych warunkach, maklerzy/inwestorzy nie znają z góry korelacji instrumentów finansowych które maja w portfelu. Muszą sami wyestymować macierz korelacji na podstawie której będą szacować ryzyko. 
+
+Twórce dokumentacji CreditMetrics podsuwają parę metodyk na rozwiązanie tego problemu. 
+
+Po pierwsze jest **metoda stałej korelacji**, czyli założenie że wszytskie elementy portfela są ze sobą tak samo skorelowane na około poziomie od 25% do 30%. Zaletami tego podejścia jest prostota i szybkośc obliczeń, natomiast główną wadą jest niska szczegółowość analizy.
+
+Następnie omawiana jest **metoda korelacji zwrtów akcji**, czyli założenie że korelacja aktywów w modelu jest tożsama z korelacją zwrotów z akcji elementów portfela. Zaletami jest łatwy dostęp do zwrotów akcji oraz lepsze dopasowanie niz metoda stałej korelacji, jednak nadal jest to sposób o zbyt małej szczgółowosci i może przeaczać wiele ważnych informacji dla inwestorów. 
+
+Ostetcznie, najbardziej zaawansowany sposób wyznaczania korelacji w modelu czyli **metoda indeksów branżowych**. Podejście to wykorzystuje korelacje między indeksami branżowymi w różnych krajach. Makler dokonuje przypisania firmy do kokretnych rynków i branż i na podstawie wag oblicza korelacje z innymi firmami w portfelu. 
+
+W celu porówanania opisanych wyżej metodyk, postanowiono oszacowac korelacje między dwoma firmami, Firmą U i Firma T. 
+
+**Firma U** to firma działająca wyłącznie w branży technologicznej w Statanch zjednoczonych. Jej zwroty są w 85% zależne od amerykańskiego indeksu technologicznego, a w 15% od specyficznych czynników firmowych.
+
+**Firma T** działa w 60% w włoskim sektorze motoryzacyjnym i w 40% we włoskim sektorze finansowym. 25% jej ruchów cenowych jest niezależnych od indeksów branżowych.
+
+***
+
+## Metoda I
+
+***
+
+Używając tą metodę, makler założyby że korelacja między Firmą U i Firma T jest na poziomie np. 27%. Swoją estymacje prawdopodonie oparłby na doświadczeniu oraz intuicji.
 
 
+***
+
+## Metoda II
+
+***
+
+W metodzie II, makler otworzyłby strone stooq.pl i pobrał dane na temat np. ostatnich 2 miesięcy wartości akcji. Miałby przed sobą 2 szeregi czasowe, i wystarczyłby obliczyc ich korelacje między sobą, metoda Spearmana.
+
+```{r}
+set.seed(42)
+
+daty <- seq(as.Date("2024-01-01"), by = "day", length.out = 80)
+daty <- daty[!weekdays(daty) %in% c("sobota", "niedziela")]  
+cena_spolka2 <- cumsum(rnorm(length(daty), mean = 0, sd = 1.2)) + 50
+cena_spolka1 <- cumsum(rnorm(length(daty), mean = 0, sd = 1)) + 100
 
 
+dane <- data.frame(Data = daty, Spolka1 = cena_spolka1, Spolka2 = cena_spolka2)
 
 
+ggplot(dane, aes(x = Data)) +
+  geom_line(aes(y = Spolka1, color = "Firma U"), size = 1) +
+  geom_line(aes(y = Spolka2, color = "Firma T"), size = 1) +
+  labs(title = NULL,
+       x = "Data",
+       y = "Cena zamknięcia[USD]",
+       color = NULL) +
+  theme_minimal(base_size = 18) +
+  scale_color_manual(values = c("Firma U" = "orange", "Firma T" = "#CD1076" ))+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
+
+korelacja_spearman <- cor(dane$Spolka1, dane$Spolka2, method = "spearman")
+
+
+```
+
+Dla wyżej przedstawionych danych, oszacowana korelacja wyniosłaby około **45%**.
+
+***
+
+## Metoda III
+
+***
+
+W przypadku wybrania trzeciej metody, maklerowi potrzebna będzie tabela z korelacjami oraz zmiennością indeksów branżowych.
+
+```{r}
+
+uuu <- data.frame(Indeks = c("USA technologia", "Włoska motoryzacja", "Włoskie finanse"), Wolatylność = c("2.5%", "3.0%", "2.8%"), USA_technologia = c(1.00, 0.40, 0.35), Włoska_motoryzacja = c(0.40, 1.00, 0.50), Włoskie_finanse = c(0.35,0.50,1.00)  )
+
+uuu
+```
+
+Następnie, potrzebna jest zmiana wag na znormalizowane zwroty. W omawianym przypadku dokanać tego można poniżscym wzorom
+
+* Zwrot standaryzowany dla Firmy U 
+
+$R_A = 0.85 * R_TechUS + 0.15 * \epsilon_A$
+
+
+* Zwrot standaryzowany dla Firmy T 
+
+$R_B = 0.60 * R_AutoIT + 0.40*R_FinanceIT + 0.25 \epsilon_B$
+
+Ostatecznie obliczamy korelacje za pomoća poniższego równania
+
+$ρ(A,B)=(0.85×0.60×0.40)+(0.85×0.40×0.50)+(0.85×0.35×1.00)=(0.204)+(0.17)+(0.2975)=0.6715$
+
+***
+
+## Podsumowanie
+
+***
+
+Wszytskie zaproponowane metody przez twórców dokumentacji CreditMetrics, są od siebie znacząco różne oraz wykorzystują różne informacje do oszacowania korelacji. Ostatecznie metoda III wydaje sie najbardziej obiecująca ze względu na to że polega na najwiekszej ilości rzeczywistych danych, a nie przeczuciu osoby obliczającej. 
 
 
 

@@ -1,0 +1,273 @@
+---
+title: "Altman model"
+author: "Olga Sieradzan"
+date: "2025-03-05"
+output: 
+  html_document:
+    toc: true
+    toc_float: 
+      smooth_scroll: true
+    df_print: paged
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+```
+
+```{r}
+library(foreign)
+library(dplyr)
+library(cowplot)
+library(ggplot2)
+library(readr)
+library(readxl)
+database <- read.csv("C:/Users/olgas/OneDrive/Documents/GitHub/Quantative-risk-models-summit/Model AMA/plik1.csv")
+```
+***
+
+# Wstęp
+
+***
+
+***
+
+# Opis danych 
+
+***
+
+***
+
+# Dopasowanie rozkładów
+
+***
+
+Kluczowym krokiem w badaniu jest dopasowanie odpowiednich rozkładów do wszytskich 7 linii biznesowych wymienionych poniżej, wraz z częstotliwo ścią występowania.
+```{r}
+n <- data.frame(table(database$linia))
+n
+```
+
+W celu dopasowanie rozkładów, istotnym jest wyznaczenie średnich oraz wariancji ilości strat na rok, oraz wartości strat.
+
+
+
+***
+
+## Rozkład częstości strat
+
+***
+
+W tej części zostanie dopasowane osiem rozkładów do niżej zaprezentowanych danych
+
+**Ilośći start na rok**
+
+```{r}
+bus <- data.frame(table(database$rok[database$linia == "Buss_Distr"]))
+com <- data.frame(table(database$rok[database$linia == "Com_Ban"]))
+dam <- data.frame(table(database$rok[database$linia == "Damage"]))
+empl <- data.frame(table(database$rok[database$linia == "Empl_Pract"]))
+del <- data.frame(table(database$rok[database$linia == "Execut_Del"]))
+ex <- data.frame(table(database$rok[database$linia == "External_Fr"]))
+intr <- data.frame(table(database$rok[database$linia == "Internal_Fr"]))
+colnames(bus) <- c("Year", "Buss_Distr")
+colnames(com) <- c("Year", "Com_Ban")
+colnames(dam) <- c("Year", "Damage")
+colnames(empl) <- c("Year", "Empl_Pract")
+colnames(del) <- c("Year", "Execut_Del")
+colnames(ex) <- c("Year", "External_Fr")
+colnames(intr) <- c("Year", "Internal_Fr")
+
+df_list <- list(bus, com, dam, empl, del, ex, intr)
+
+final_df <- Reduce(function(x, y) merge(x, y, by = "Year", all = TRUE), df_list)
+
+final_df
+```
+
+Na sam początek w dopasowaniu może pomóc obliczenie statystyk opisowych dla każdego rozkładu. Sczegołnie interesującymi jest wariancja oraz średnia. Różnica między tymi dwoma statystykami jest ważną informacją przy wybrze rozkładu. 
+
+```{r}
+numeric_df <- final_df[, -1]
+
+means <- colMeans(numeric_df, na.rm = TRUE)
+
+variances <- apply(numeric_df, 2, var, na.rm = TRUE)
+
+stats_df <- data.frame(
+  Średnia = means,
+  Wariancja = variances,
+  Różnica = means - variances 
+  
+)
+
+stats_df
+```
+
+Wszytskie różnice wydają się istotne, stąd prawdopodobnie rozkład Poissona może nie być najlepszym dopasowaniem. W większości przypadków różnica wskazuje na rozkład dwumianowy ($E(X) > D^2(X)$), jednak w dwóch przypadkach mozliwy jest rozkład dwumianowy ujemny, ze względy na przeciwną zależnośc średniej i wariancji. 
+
+Potencjalne wartości parametrów wszytskich rozwazanych rozkładów, łatwo obliczyć ze wzorów.
+
+**Rozkład dwumianowy**
+
+W pięciu przypadkach, różnica wskazuje na rozkład dwumianowy. Poniżej opisano wzory na parametry rozkładuu
+
+$n = \frac{Mean^2}{Mean - Variance}$ - liczba zdarzeń
+
+$p = \frac{Mean}{n}$ - prawdopodobieństwo sukcesu
+
+$q = (1-p)$ - prawdopodobieństwo porażki
+
+```{r}
+N = (stats_df$Średnia)^2/ (stats_df$Różnica)
+
+dwu_df <- data.frame(
+  Line = names(means),
+  n = round(N, 0),
+  p = (stats_df$Średnia)/ N
+)
+
+dwu_df[c(1,2,4,5,6),]
+```
+
+Następnym krokiem jest przetestowanie naszych podejżeń 3 różnymni testami
+
+```{r}
+library(nortest)
+library(nortest)
+library(goftest) 
+
+test_goodness_of_fit <- function(data_df, stats_df) {
+  results <- data.frame(Line = character(),
+                        Chi_Square = character(),
+                        KS_Test = character(),
+                        AD_Test = character(),
+                        stringsAsFactors = FALSE)
+  j = 1
+  for (line in stats_df$Line) {
+    observed_values <- na.omit(data_df[,j+1])  
+    
+    
+    n_binom <- stats_df$n[stats_df$Line == line]
+    p_binom <- stats_df$p[stats_df$Line == line]
+   
+    expected_values <- rbinom(length(observed_values), size = round(n_binom), prob = p_binom)
+
+    # Test chi-kwadrat Pearsona
+    chi_test <- chisq.test(observed_values, p = dbinom(observed_values, size = round(n_binom), prob = p_binom), rescale.p = TRUE)
+    chi_result <- ifelse(chi_test$p.value < 0.05, "Odrzucamy H0", "Nie odrzucamy H0")
+
+    # Test Kołmogorowa-Smirnowa (Lilieforsa)
+    ks_test <- ks.test(observed_values, "pbinom", size = n_binom, prob = p_binom)
+    ks_result <- ifelse(ks_test$p.value < 0.05, "Odrzucamy H0", "Nie odrzucamy H0")
+
+    # Test Andersona-Darlinga
+    ad_test <- AndersonDarlingTest(observed_values, null = "pbinom", size = n_binom, prob = p_binom)
+    ad_result <- ifelse(ad_test$p.value < 0.05, "Odrzucamy H0", "Nie odrzucamy H0")
+
+    # Dodajemy wyniki do data.frame
+    results <- rbind(results, data.frame(Line = line,
+                                         Chi_Square = chi_result,
+                                         KS_Test = ks_result,
+                                         AD_Test = ad_result))
+    j+1
+  }
+
+  return(results)
+}
+
+# Uruchomienie funkcji na naszych danych
+test_results <- test_goodness_of_fit(final_df[,c(2,3,5,6,7)], dwu_df[c(1,2,4,5,6),])
+
+test_results
+
+
+```
+
+
+***
+
+## Rozkład wartości strat
+
+***
+
+***
+
+# Symulacja
+
+***
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
