@@ -23,6 +23,8 @@ library(cowplot)
 library(ggplot2)
 library(readr)
 library(readxl)
+library(MASS)
+library(fitdistrplus)
 database <- read.csv("C:/Users/olgas/OneDrive/Documents/GitHub/Quantative-risk-models-summit/Model AMA/plik1.csv")
 ```
 ***
@@ -86,7 +88,7 @@ final_df <- Reduce(function(x, y) merge(x, y, by = "Year", all = TRUE), df_list)
 final_df
 ```
 
-Na sam początek w dopasowaniu może pomóc obliczenie statystyk opisowych dla każdego rozkładu. Sczegołnie interesującymi jest wariancja oraz średnia. Różnica między tymi dwoma statystykami jest ważną informacją przy wybrze rozkładu. 
+Na sam początek w dopasowaniu może pomóc obliczenie statystyk opisowych dla każdego rozkładu. Sczegołnie interesującymi jest wariancja oraz średnia. Różnica między tymi dwoma statystykami jest ważną informacją przy wyborze rozkładu. 
 
 ```{r}
 numeric_df <- final_df[, -1]
@@ -107,17 +109,67 @@ stats_df
 
 Wszytskie różnice wydają się istotne, stąd prawdopodobnie rozkład Poissona może nie być najlepszym dopasowaniem. W większości przypadków różnica wskazuje na rozkład dwumianowy ($E(X) > D^2(X)$), jednak w dwóch przypadkach mozliwy jest rozkład dwumianowy ujemny, ze względy na przeciwną zależnośc średniej i wariancji. 
 
-Potencjalne wartości parametrów wszytskich rozwazanych rozkładów, łatwo obliczyć ze wzorów.
+Potencjalne wartości parametrów wszytskich rozwazanych rozkładów, łatwo obliczyć ze wzorów lub za pomocą funkcji dopasowywujących. Do weryfikacji testów przeproadzono test statystyczny chi-kwadrat z poziomem istotności$\alpha = 0.05$
+
+**Rozkład ujemny dwumianowy**
+W przypadku dwóch lini, róznica wyszła znacząco ujemna. Wskazuje to że możliwym jest że będzie to rozkład ujemny dwumianowy. 
+
+
+```{r}
+r_neg_binom <- (stats_df$Średnia)^2 / (stats_df$Wariancja - stats_df$Średnia)
+p_neg_binom <- stats_df$Średnia / stats_df$Wariancja
+
+dwu_uj <- data.frame(
+  Line = names(means),
+  r = r_neg_binom,
+  p = p_neg_binom
+)
+
+dwu_uj <- dwu_uj[c(3,7),]
+
+fit_negbin_with_tests <- function(data) {
+  # Dopasowanie rozkładu ujemnego dwumianowego
+  fit <- fitdist(data, "nbinom",
+                method = "mse", 
+                start = list(size = 1, mu = mean(data)))  
+  
+  
+  gof <- gofstat(fit)
+  
+  
+  chisq_test <- ifelse(gof$chisqpvalue < 0.05, "H0 odrzucona", "H0 nieodrzucona")
+  
+  
+  return(list(
+    size = fit$estimate["size"],
+    mu = fit$estimate["mu"],
+    chisq_result = chisq_test
+  ))
+}
+
+
+
+
+results <- mapply(fit_negbin_with_tests, 
+                 final_df[,c(4,8)], 
+                 SIMPLIFY = FALSE)
+
+dwu_uj$size <- sapply(results, function(x) x$size)
+dwu_uj$mu <- sapply(results, function(x) x$mu)
+dwu_uj$chisq_test <- sapply(results, function(x) x$chisq_result)
+
+
+dwu_uj[,c(1,4,5,6)]
+
+
+
+
+```
+
 
 **Rozkład dwumianowy**
 
-W pięciu przypadkach, różnica wskazuje na rozkład dwumianowy. Poniżej opisano wzory na parametry rozkładuu
 
-$n = \frac{Mean^2}{Mean - Variance}$ - liczba zdarzeń
-
-$p = \frac{Mean}{n}$ - prawdopodobieństwo sukcesu
-
-$q = (1-p)$ - prawdopodobieństwo porażki
 
 ```{r}
 N = (stats_df$Średnia)^2/ (stats_df$Różnica)
@@ -128,62 +180,113 @@ dwu_df <- data.frame(
   p = (stats_df$Średnia)/ N
 )
 
-dwu_df[c(1,2,4,5,6),]
-```
+dwu_df1 <- dwu_df[c(1,2,4,5,6),]
 
-Następnym krokiem jest przetestowanie naszych podejżeń 3 różnymni testami
 
-```{r}
-library(nortest)
-library(nortest)
-library(goftest) 
 
-test_goodness_of_fit <- function(data_df, stats_df) {
-  results <- data.frame(Line = character(),
-                        Chi_Square = character(),
-                        KS_Test = character(),
-                        AD_Test = character(),
-                        stringsAsFactors = FALSE)
-  j = 1
-  for (line in stats_df$Line) {
-    observed_values <- na.omit(data_df[,j+1])  
-    
-    
-    n_binom <- stats_df$n[stats_df$Line == line]
-    p_binom <- stats_df$p[stats_df$Line == line]
-   
-    expected_values <- rbinom(length(observed_values), size = round(n_binom), prob = p_binom)
+fit_binomial_with_tests <- function(data, n) {
 
-    # Test chi-kwadrat Pearsona
-    chi_test <- chisq.test(observed_values, p = dbinom(observed_values, size = round(n_binom), prob = p_binom), rescale.p = TRUE)
-    chi_result <- ifelse(chi_test$p.value < 0.05, "Odrzucamy H0", "Nie odrzucamy H0")
-
-    # Test Kołmogorowa-Smirnowa (Lilieforsa)
-    ks_test <- ks.test(observed_values, "pbinom", size = n_binom, prob = p_binom)
-    ks_result <- ifelse(ks_test$p.value < 0.05, "Odrzucamy H0", "Nie odrzucamy H0")
-
-    # Test Andersona-Darlinga
-    ad_test <- AndersonDarlingTest(observed_values, null = "pbinom", size = n_binom, prob = p_binom)
-    ad_result <- ifelse(ad_test$p.value < 0.05, "Odrzucamy H0", "Nie odrzucamy H0")
-
-    # Dodajemy wyniki do data.frame
-    results <- rbind(results, data.frame(Line = line,
-                                         Chi_Square = chi_result,
-                                         KS_Test = ks_result,
-                                         AD_Test = ad_result))
-    j+1
-  }
-
-  return(results)
+  fit <- fitdist(data, "binom",
+                start = list(prob = 0.5),
+                fix.arg = list(size = n),
+                method = "mse")
+  
+  # Testy dopasowania
+  gof <- gofstat(fit)
+  
+  # Sprawdzenie wartości p dla testów
+  chisq_test <- ifelse(gof$chisqpvalue < 0.05, "H0 odrzucona", "H0 nieodrzucona")
+  
+  # Zwracamy zarówno estymowane p jak i wyniki testów
+  return(list(
+    p = fit$estimate["prob"],
+    chisq_result = chisq_test
+  ))
 }
 
-# Uruchomienie funkcji na naszych danych
-test_results <- test_goodness_of_fit(final_df[,c(2,3,5,6,7)], dwu_df[c(1,2,4,5,6),])
+# Stosujemy funkcję do danych
+results <- mapply(fit_binomial_with_tests, 
+                 final_df[,c(2,3,5,6,7)], 
+                 360, 
+                 SIMPLIFY = FALSE)
 
-test_results
+# Przetwarzamy wyniki do data.frame
+dwu_df1$p_fitdistr <- sapply(results, function(x) x$p)
+dwu_df1$chisq_test <- sapply(results, function(x) x$chisq_result)
+
+# Wyświetlamy wyniki
+dwu_df1
 
 
 ```
+
+**Rozkład Poissona**
+
+```{r}
+fit_poisson_simple <- function(data) {
+
+  fit <- fitdist(data, "pois", start = list(lambda = mean(data)))
+  gof <- gofstat(fit)
+  
+  return(list(
+    lambda = fit$estimate,
+    chisq_test = ifelse(gof$chisqpvalue < 0.05, 
+                       "H0 odrzucona", 
+                       "H0 nieodrzucona")
+  ))
+}
+
+# Stosujemy funkcję do danych
+results <- fit_poisson_simple(
+                 as.vector(final_df$Empl_Pract)
+                 )
+
+dw_po <- data.frame(
+  Line = "Empl_Prac",
+  lambda = results$lambda,
+  chisq_test = results$chisq_test
+)
+
+dw_po
+  
+```
+
+**Rozkład geometryczny**
+
+```{r}
+
+
+fit_geometric_simple <- function(data) {
+  
+
+  fit <- fitdist(data, "geom", method = "mle")
+  
+
+  gof <- gofstat(fit)
+  
+  return(list(
+    prob = fit$estimate["prob"],  # Parametr rozkładu geometrycznego
+    chisq_test = ifelse(gof$chisqpvalue < 0.05, 
+                       "H0 odrzucona", 
+                       "H0 nieodrzucona")
+  ))
+}
+
+results <- fit_geometric_simple(
+  as.vector(final_df$Empl_Pract)
+)
+
+dw_geom <- data.frame(
+  Line = "Empl_Prac",
+  prob = results$prob,  
+  chisq_test = results$chisq_test
+)
+
+# Wyświetlamy wyniki
+print(dw_geom)
+```
+
+Linia Empl_prac niestety nie daje się dopasowac do niczego dlatego postanowiono że jest rozkładem poissona o lambdzie = 62.
 
 
 ***

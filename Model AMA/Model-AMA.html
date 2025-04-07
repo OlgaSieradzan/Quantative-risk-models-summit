@@ -2851,6 +2851,8 @@ library(cowplot)
 library(ggplot2)
 library(readr)
 library(readxl)
+library(MASS)
+library(fitdistrplus)
 database &lt;- read.csv(&quot;C:/Users/olgas/OneDrive/Documents/GitHub/Quantative-risk-models-summit/Model AMA/plik1.csv&quot;)</code></pre>
 <hr />
 <div id="wstęp" class="section level1">
@@ -2913,7 +2915,7 @@ final_df</code></pre>
 <p>Na sam początek w dopasowaniu może pomóc obliczenie statystyk
 opisowych dla każdego rozkładu. Sczegołnie interesującymi jest wariancja
 oraz średnia. Różnica między tymi dwoma statystykami jest ważną
-informacją przy wybrze rozkładu.</p>
+informacją przy wyborze rozkładu.</p>
 <pre class="r"><code>numeric_df &lt;- final_df[, -1]
 
 means &lt;- colMeans(numeric_df, na.rm = TRUE)
@@ -2940,14 +2942,63 @@ różnica wskazuje na rozkład dwumianowy (<span class="math inline">\(E(X)
 dwumianowy ujemny, ze względy na przeciwną zależnośc średniej i
 wariancji.</p>
 <p>Potencjalne wartości parametrów wszytskich rozwazanych rozkładów,
-łatwo obliczyć ze wzorów.</p>
+łatwo obliczyć ze wzorów lub za pomocą funkcji dopasowywujących. Do
+weryfikacji testów przeproadzono test statystyczny chi-kwadrat z
+poziomem istotności<span class="math inline">\(\alpha =
+0.05\)</span></p>
+<p><strong>Rozkład ujemny dwumianowy</strong> W przypadku dwóch lini,
+róznica wyszła znacząco ujemna. Wskazuje to że możliwym jest że będzie
+to rozkład ujemny dwumianowy.</p>
+<pre class="r"><code>r_neg_binom &lt;- (stats_df$Średnia)^2 / (stats_df$Wariancja - stats_df$Średnia)
+p_neg_binom &lt;- stats_df$Średnia / stats_df$Wariancja
+
+dwu_uj &lt;- data.frame(
+  Line = names(means),
+  r = r_neg_binom,
+  p = p_neg_binom
+)
+
+dwu_uj &lt;- dwu_uj[c(3,7),]
+
+fit_negbin_with_tests &lt;- function(data) {
+  # Dopasowanie rozkładu ujemnego dwumianowego
+  fit &lt;- fitdist(data, &quot;nbinom&quot;,
+                method = &quot;mse&quot;, 
+                start = list(size = 1, mu = mean(data)))  
+  
+  
+  gof &lt;- gofstat(fit)
+  
+  
+  chisq_test &lt;- ifelse(gof$chisqpvalue &lt; 0.05, &quot;H0 odrzucona&quot;, &quot;H0 nieodrzucona&quot;)
+  
+  
+  return(list(
+    size = fit$estimate[&quot;size&quot;],
+    mu = fit$estimate[&quot;mu&quot;],
+    chisq_result = chisq_test
+  ))
+}
+
+
+
+
+results &lt;- mapply(fit_negbin_with_tests, 
+                 final_df[,c(4,8)], 
+                 SIMPLIFY = FALSE)
+
+dwu_uj$size &lt;- sapply(results, function(x) x$size)
+dwu_uj$mu &lt;- sapply(results, function(x) x$mu)
+dwu_uj$chisq_test &lt;- sapply(results, function(x) x$chisq_result)
+
+
+dwu_uj[,c(1,4,5,6)]</code></pre>
+<div data-pagedtable="false">
+<script data-pagedtable-source type="application/json">
+{"columns":[{"label":[""],"name":["_rn_"],"type":[""],"align":["left"]},{"label":["Line"],"name":[1],"type":["chr"],"align":["left"]},{"label":["size"],"name":[2],"type":["dbl"],"align":["right"]},{"label":["mu"],"name":[3],"type":["dbl"],"align":["right"]},{"label":["chisq_test"],"name":[4],"type":["chr"],"align":["left"]}],"data":[{"1":"Damage","2":"4.332903","3":"18.56427","4":"H0 nieodrzucona","_rn_":"3"},{"1":"Internal_Fr","2":"60.081184","3":"100.83760","4":"H0 nieodrzucona","_rn_":"7"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
+  </script>
+</div>
 <p><strong>Rozkład dwumianowy</strong></p>
-<p>W pięciu przypadkach, różnica wskazuje na rozkład dwumianowy. Poniżej
-opisano wzory na parametry rozkładuu</p>
-<p><span class="math inline">\(n = \frac{Mean^2}{Mean -
-Variance}\)</span> - liczba zdarzeń <span class="math inline">\(p =
-\frac{Mean}{n}\)</span> - prawdopodobieństwo sukcesu <span class="math inline">\(q = (1-p)\)</span> - prawdopodobieństwo
-porażki</p>
 <pre class="r"><code>N = (stats_df$Średnia)^2/ (stats_df$Różnica)
 
 dwu_df &lt;- data.frame(
@@ -2956,14 +3007,111 @@ dwu_df &lt;- data.frame(
   p = (stats_df$Średnia)/ N
 )
 
-dwu_df[c(1,2,4,5,6),]</code></pre>
+dwu_df1 &lt;- dwu_df[c(1,2,4,5,6),]
+
+
+
+fit_binomial_with_tests &lt;- function(data, n) {
+
+  fit &lt;- fitdist(data, &quot;binom&quot;,
+                start = list(prob = 0.5),
+                fix.arg = list(size = n),
+                method = &quot;mse&quot;)
+  
+  # Testy dopasowania
+  gof &lt;- gofstat(fit)
+  
+  # Sprawdzenie wartości p dla testów
+  chisq_test &lt;- ifelse(gof$chisqpvalue &lt; 0.05, &quot;H0 odrzucona&quot;, &quot;H0 nieodrzucona&quot;)
+  
+  # Zwracamy zarówno estymowane p jak i wyniki testów
+  return(list(
+    p = fit$estimate[&quot;prob&quot;],
+    chisq_result = chisq_test
+  ))
+}
+
+# Stosujemy funkcję do danych
+results &lt;- mapply(fit_binomial_with_tests, 
+                 final_df[,c(2,3,5,6,7)], 
+                 360, 
+                 SIMPLIFY = FALSE)
+
+# Przetwarzamy wyniki do data.frame
+dwu_df1$p_fitdistr &lt;- sapply(results, function(x) x$p)
+dwu_df1$chisq_test &lt;- sapply(results, function(x) x$chisq_result)
+
+# Wyświetlamy wyniki
+dwu_df1</code></pre>
 <div data-pagedtable="false">
 <script data-pagedtable-source type="application/json">
-{"columns":[{"label":[""],"name":["_rn_"],"type":[""],"align":["left"]},{"label":["Line"],"name":[1],"type":["chr"],"align":["left"]},{"label":["n"],"name":[2],"type":["dbl"],"align":["right"]},{"label":["p"],"name":[3],"type":["dbl"],"align":["right"]}],"data":[{"1":"Buss_Distr","2":"13","3":"0.5080214","_rn_":"1"},{"1":"Com_Ban","2":"34","3":"0.4250855","_rn_":"2"},{"1":"Empl_Pract","2":"164","3":"0.3780237","_rn_":"4"},{"1":"Execut_Del","2":"31","3":"0.4588704","_rn_":"5"},{"1":"External_Fr","2":"12","3":"0.5799708","_rn_":"6"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
+{"columns":[{"label":[""],"name":["_rn_"],"type":[""],"align":["left"]},{"label":["Line"],"name":[1],"type":["chr"],"align":["left"]},{"label":["n"],"name":[2],"type":["dbl"],"align":["right"]},{"label":["p"],"name":[3],"type":["dbl"],"align":["right"]},{"label":["p_fitdistr"],"name":[4],"type":["dbl"],"align":["right"]},{"label":["chisq_test"],"name":[5],"type":["chr"],"align":["left"]}],"data":[{"1":"Buss_Distr","2":"13","3":"0.5080214","4":"0.02004632","5":"H0 nieodrzucona","_rn_":"1"},{"1":"Com_Ban","2":"34","3":"0.4250855","4":"0.04158443","5":"H0 nieodrzucona","_rn_":"2"},{"1":"Empl_Pract","2":"164","3":"0.3780237","4":"0.17252835","5":"H0 odrzucona","_rn_":"4"},{"1":"Execut_Del","2":"31","3":"0.4588704","4":"0.04066709","5":"H0 nieodrzucona","_rn_":"5"},{"1":"External_Fr","2":"12","3":"0.5799708","4":"0.02102162","5":"H0 nieodrzucona","_rn_":"6"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
   </script>
 </div>
-<p>Następnym krokiem jest przetestowanie naszych podejżeń 3 różnymni
-testami</p>
+<p><strong>Rozkład Poissona</strong></p>
+<pre class="r"><code>fit_poisson_simple &lt;- function(data) {
+
+  fit &lt;- fitdist(data, &quot;pois&quot;, start = list(lambda = mean(data)))
+  gof &lt;- gofstat(fit)
+  
+  return(list(
+    lambda = fit$estimate,
+    chisq_test = ifelse(gof$chisqpvalue &lt; 0.05, 
+                       &quot;H0 odrzucona&quot;, 
+                       &quot;H0 nieodrzucona&quot;)
+  ))
+}
+
+# Stosujemy funkcję do danych
+results &lt;- fit_poisson_simple(
+                 as.vector(final_df$Empl_Pract)
+                 )
+
+dw_po &lt;- data.frame(
+  Line = &quot;Empl_Prac&quot;,
+  lambda = results$lambda,
+  chisq_test = results$chisq_test
+)
+
+dw_po</code></pre>
+<div data-pagedtable="false">
+<script data-pagedtable-source type="application/json">
+{"columns":[{"label":[""],"name":["_rn_"],"type":[""],"align":["left"]},{"label":["Line"],"name":[1],"type":["chr"],"align":["left"]},{"label":["lambda"],"name":[2],"type":["dbl"],"align":["right"]},{"label":["chisq_test"],"name":[3],"type":["chr"],"align":["left"]}],"data":[{"1":"Empl_Prac","2":"62.11429","3":"H0 odrzucona","_rn_":"lambda"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
+  </script>
+</div>
+<p><strong>Rozkład geometryczny</strong></p>
+<pre class="r"><code>fit_geometric_simple &lt;- function(data) {
+  
+
+  fit &lt;- fitdist(data, &quot;geom&quot;, method = &quot;mle&quot;)
+  
+
+  gof &lt;- gofstat(fit)
+  
+  return(list(
+    prob = fit$estimate[&quot;prob&quot;],  # Parametr rozkładu geometrycznego
+    chisq_test = ifelse(gof$chisqpvalue &lt; 0.05, 
+                       &quot;H0 odrzucona&quot;, 
+                       &quot;H0 nieodrzucona&quot;)
+  ))
+}
+
+results &lt;- fit_geometric_simple(
+  as.vector(final_df$Empl_Pract)
+)
+
+dw_geom &lt;- data.frame(
+  Line = &quot;Empl_Prac&quot;,
+  prob = results$prob,  
+  chisq_test = results$chisq_test
+)
+
+# Wyświetlamy wyniki
+print(dw_geom)</code></pre>
+<pre><code>##           Line       prob   chisq_test
+## prob Empl_Prac 0.01584427 H0 odrzucona</code></pre>
+<p>Linia Empl_prac niestety nie daje się dopasowac do niczego dlatego
+postanowiono że jest rozkładem poissona o lambdzie = 62.</p>
 <hr />
 </div>
 <div id="rozkład-wartości-strat" class="section level2">
