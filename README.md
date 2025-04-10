@@ -1,1 +1,1 @@
-This project presents a comparative analysis of three quantitative risk models: Altman’s Z-Score, AMA (Advanced Measurement Approach), and CreditMetrics. Implemented in R, the study includes three detailed reports exploring how each model operates, their applications in risk assessment, and their effectiveness in different financial contexts.
+.
