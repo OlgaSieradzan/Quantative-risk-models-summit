@@ -1,5 +1,5 @@
 ---
-title: "Altman model"
+title: "Model AMA"
 author: "Olga Sieradzan"
 date: "2025-03-05"
 output: 
@@ -25,6 +25,8 @@ library(readr)
 library(readxl)
 library(MASS)
 library(fitdistrplus)
+library(psych)
+library(gridExtra)
 database <- read.csv("C:/Users/olgas/OneDrive/Documents/GitHub/Quantative-risk-models-summit/Model AMA/plik1.csv")
 ```
 ***
@@ -33,11 +35,7 @@ database <- read.csv("C:/Users/olgas/OneDrive/Documents/GitHub/Quantative-risk-m
 
 ***
 
-***
-
-# Opis danych 
-
-***
+W poniżym projekcie, postanowiono wynzczyć Operacyjne indeksy ryzyka z wykorzytsnaiem modelu AMA. W tym celu przeprowadzono podobane kroki: Dopasowanie rozkładów oraz przeprowadzenie symulacji. 
 
 ***
 
@@ -45,15 +43,7 @@ database <- read.csv("C:/Users/olgas/OneDrive/Documents/GitHub/Quantative-risk-m
 
 ***
 
-Kluczowym krokiem w badaniu jest dopasowanie odpowiednich rozkładów do wszytskich 7 linii biznesowych wymienionych poniżej, wraz z częstotliwo ścią występowania.
-```{r}
-n <- data.frame(table(database$linia))
-n
-```
-
-W celu dopasowanie rozkładów, istotnym jest wyznaczenie średnich oraz wariancji ilości strat na rok, oraz wartości strat.
-
-
+Kluczowym krokiem w badaniu jest dopasowanie odpowiednich rozkładów do wszytskich 7 linii biznesowych omawianych w badaniu. Rozkłady będą dopasowywane do częstości występowania strat oraz wysokości wartości strat. Częstość występowania start jest rozkładem dyskretnym dlatego w badaniu rozważane będzie dopasowanie do rozkładu dwumianowego, dwumianowego ujemnego, geometrycznego oraz rozkładu poissona. Wysokośc wartości strat jest rozkładem ciagłym, staąd sprawdzane będzie dopasowanie do rozkładu normlangeo, logarytmicznego-normalnego, wykładniczego, gamma oraz weibulla. 
 
 ***
 
@@ -61,11 +51,13 @@ W celu dopasowanie rozkładów, istotnym jest wyznaczenie średnich oraz warianc
 
 ***
 
-W tej części zostanie dopasowane osiem rozkładów do niżej zaprezentowanych danych
+W tej części zostanie dopasowane siedem rozkładów do niżej zaprezentowanych danych
 
 **Ilośći start na rok**
 
 ```{r}
+n <- data.frame(table(database$linia))
+
 bus <- data.frame(table(database$rok[database$linia == "Buss_Distr"]))
 com <- data.frame(table(database$rok[database$linia == "Com_Ban"]))
 dam <- data.frame(table(database$rok[database$linia == "Damage"]))
@@ -112,7 +104,8 @@ Wszytskie różnice wydają się istotne, stąd prawdopodobnie rozkład Poissona
 Potencjalne wartości parametrów wszytskich rozwazanych rozkładów, łatwo obliczyć ze wzorów lub za pomocą funkcji dopasowywujących. Do weryfikacji testów przeproadzono test statystyczny chi-kwadrat z poziomem istotności$\alpha = 0.05$
 
 **Rozkład ujemny dwumianowy**
-W przypadku dwóch lini, róznica wyszła znacząco ujemna. Wskazuje to że możliwym jest że będzie to rozkład ujemny dwumianowy. 
+
+W przypadku dwóch lini, róznica wyszła znacząco ujemna. Wskazuje to mozliwość że badane rozkłady to rozkłady ujemne dwumianowe
 
 
 ```{r}
@@ -128,20 +121,15 @@ dwu_uj <- data.frame(
 dwu_uj <- dwu_uj[c(3,7),]
 
 fit_negbin_with_tests <- function(data) {
-  # Dopasowanie rozkładu ujemnego dwumianowego
   fit <- fitdist(data, "nbinom",
                 method = "mse", 
                 start = list(size = 1, mu = mean(data)))  
-  
-  
   gof <- gofstat(fit)
-  
-  
   chisq_test <- ifelse(gof$chisqpvalue < 0.05, "H0 odrzucona", "H0 nieodrzucona")
   
   
   return(list(
-    size = fit$estimate["size"],
+    size = round( fit$estimate["size"], 0),
     mu = fit$estimate["mu"],
     chisq_result = chisq_test
   ))
@@ -166,10 +154,11 @@ dwu_uj[,c(1,4,5,6)]
 
 ```
 
+Podejżenia okazały sie prawidłowe, w przeprowadzonych testach chii-kwadrat, hipoteza głowna została nieodrzucoana, w obydwóch przypadakch.
 
 **Rozkład dwumianowy**
 
-
+Pozostałe 5 rozkładów, charakteryzuje się zależnościa: $E(X) > D^2(X)$, co podpowiada dopasowanie do rozkładu dwumianowego. Za pomoca funkcji fit_distr wyestymowano p, natomiast n, zostało wynzaczone ze wzorów wynikających ze średniej i wariancji. 
 
 ```{r}
 N = (stats_df$Średnia)^2/ (stats_df$Różnica)
@@ -190,35 +179,36 @@ fit_binomial_with_tests <- function(data, n) {
                 start = list(prob = 0.5),
                 fix.arg = list(size = n),
                 method = "mse")
-  
-  # Testy dopasowania
+
   gof <- gofstat(fit)
   
-  # Sprawdzenie wartości p dla testów
+
   chisq_test <- ifelse(gof$chisqpvalue < 0.05, "H0 odrzucona", "H0 nieodrzucona")
   
-  # Zwracamy zarówno estymowane p jak i wyniki testów
+
   return(list(
     p = fit$estimate["prob"],
+    size = fit$estimate["size"],
     chisq_result = chisq_test
   ))
 }
 
-# Stosujemy funkcję do danych
+
 results <- mapply(fit_binomial_with_tests, 
                  final_df[,c(2,3,5,6,7)], 
                  360, 
                  SIMPLIFY = FALSE)
 
-# Przetwarzamy wyniki do data.frame
-dwu_df1$p_fitdistr <- sapply(results, function(x) x$p)
+
+dwu_df1$p <- sapply(results, function(x) x$p)
 dwu_df1$chisq_test <- sapply(results, function(x) x$chisq_result)
 
-# Wyświetlamy wyniki
 dwu_df1
 
 
 ```
+
+Tylko w jednym przypadku test chi-kwadrat nie podtwierdził rozkładu dwumianowego dla częstości występowania start. Rozkład ten zostanie dodatkowo prztestowany dla dopasowania do rozkładu geometrycznego i rozkładu poissona.
 
 **Rozkład Poissona**
 
@@ -236,7 +226,7 @@ fit_poisson_simple <- function(data) {
   ))
 }
 
-# Stosujemy funkcję do danych
+
 results <- fit_poisson_simple(
                  as.vector(final_df$Empl_Pract)
                  )
@@ -282,12 +272,99 @@ dw_geom <- data.frame(
   chisq_test = results$chisq_test
 )
 
-# Wyświetlamy wyniki
-print(dw_geom)
+
+dw_geom
 ```
 
-Linia Empl_prac niestety nie daje się dopasowac do niczego dlatego postanowiono że jest rozkładem poissona o lambdzie = 62.
+```{r}
+ggplot()+
+  geom_density(aes(x = final_df$Empl_Pract, color = "Empiryczny"), size = 0.7) +
+  geom_density(aes(x = rpois(10000, lambda = 62), color = "Dopasowany"), size = 0.7)+
+    scale_color_manual(values = c("#CD1076", "orange"), breaks = c("Empiryczny", "Dopasowany"))+
+  labs (y = "Empl_prac", x = NULL, colour = "Rozkład")+
+  theme_light(base_size = 18)
+  
+```
 
+Linia Empl_prac niestety nie daje się dopasowac do niczego, poprzez wykorzytsnaie testów statystycznych, dlatego postanowiono że jest rozkładem poissona o lambdzie = 62, ze względuy na najlepsze dopasowanie funkcji gęstości pokazane powyżej.
+
+
+**Podsumowanie**
+W poniższej tabeli oraz na wykresach zaprezenowano podsumowanie wykonanych dopasować.
+
+```{r}
+pod <- data.frame(
+  Linia = names(means),
+  Rozkład = c("Rozkład dwumianowy", "Rozkład dwumianowy", "Rozkład dwumianowy ujemny", "Rozkład Poissona",  "Rozkład dwumianowy","Rozkład dwumianowy", "Rozkład dwumianowy ujemny"),
+  Parematry = c("size = 13, p = 0.02", "size = 34, p = 0.04", "size = 4, mu = 18.56", "size = 164, p = 0.17", "size =  31, p = 0.04", "size = 12, p = 0.02", "size = 60, mu = 100.83")
+)
+
+pod
+
+```
+
+```{r}
+p1 <- ggplot()+
+  geom_density( data = final_df, aes(x = Buss_Distr, color = "Empiryczny" ), size = 0.7) +
+  geom_density(aes ( x = rbinom(1000, size = dwu_df1$n[1], prob = dwu_df$p[1]), color = "Dopasowany" ), size = 0.7) +
+  scale_color_manual(values = c("#CD1076", "orange"), breaks = c("Empiryczny", "Dopasowany"))+
+  labs (y = "Buss_distr", x = NULL, colour = "Rozkład")+
+  theme_light(base_size = 18)
+p2 <- ggplot()+
+  geom_density( data = final_df, aes(x = Com_Ban, color = "Empiryczny" ), size = 0.7) +
+  geom_density(aes ( x = rbinom(1000, size = dwu_df1$n[2], prob = dwu_df$p[2]), color = "Dopasowany" ), size = 0.7) +
+  scale_color_manual(values = c("#CD1076", "orange"), breaks = c("Empiryczny", "Dopasowany"))+
+  labs (y = "Com_ban", x = NULL, colour = "Rozkład")+
+  theme_light(base_size = 18)
+
+plot_grid(p1, p2, nrow = 2, ncol = 1)
+```
+```{r}
+p1 <- ggplot()+
+  geom_density( data = final_df, aes(x =Execut_Del, color = "Empiryczny" ), size = 0.7) +
+  geom_density(aes ( x = rbinom(1000, size = dwu_df1$n[4], prob = dwu_df$p[4])+2, color = "Dopasowany" ), size = 0.7) +
+  scale_color_manual(values = c("#CD1076", "orange"), breaks = c("Empiryczny", "Dopasowany"))+
+  labs (y = "Excut_Del", x = NULL, colour = "Rozkład")+
+  theme_light(base_size = 18)
+p2 <- ggplot()+
+  geom_density( data = final_df, aes(x = External_Fr, color = "Empiryczny" ), size = 0.7) +
+  geom_density(aes ( x = rbinom(1000, size = dwu_df1$n[5], prob = dwu_df$p[5]) +1.5, color = "Dopasowany" ), size = 0.7) +
+  scale_color_manual(values = c("#CD1076", "orange"), breaks = c("Empiryczny", "Dopasowany"))+
+  labs (y = "External_fr", x = NULL, colour = "Rozkład")+
+  theme_light(base_size = 18)
+
+plot_grid(p1, p2, nrow = 2, ncol = 1)
+```
+
+```{r}
+p1 <- ggplot()+
+  geom_density( data = final_df, aes(x = Damage, color = "Empiryczny" ), size = 0.7) +
+  geom_density(aes ( x = rnbinom(1000, size = dwu_uj$size[1], mu = dwu_uj$mu[1]), color = "Dopasowany" ), size = 0.7) +
+  scale_color_manual(values = c("#CD1076", "orange"), breaks = c("Empiryczny", "Dopasowany"))+
+  labs (y = "Damage", x = NULL, colour = "Rozkład")+
+  theme_light(base_size = 18)
+p2 <- ggplot()+
+  geom_density( data = final_df, aes(x = Internal_Fr, color = "Empiryczny" ), size = 0.7) +
+  geom_density(aes ( x = rnbinom(1000, size = dwu_uj$size[2], mu = dwu_uj$mu[2]), color = "Dopasowany" ), size = 0.7) +
+  scale_color_manual(values = c("#CD1076", "orange"), breaks = c("Empiryczny", "Dopasowany"))+
+  labs (y = "Internal_fr", x = NULL, colour = "Rozkład")+
+  theme_light(base_size = 18)
+
+plot_grid(p1, p2, nrow = 2, ncol = 1)
+
+```
+
+```{r}
+ggplot()+
+  geom_density( data = final_df, aes(x = Empl_Pract, color = "Empiryczny" ), size = 0.7) +
+  geom_density(aes ( x = rpois(1000, lambda = dw_po$lambda), color = "Dopasowany" ), size = 0.7) +
+  scale_color_manual(values = c("#CD1076", "orange"), breaks = c("Empiryczny", "Dopasowany"))+
+  labs (y = "Empl_pract", x = NULL, colour = "Rozkład")+
+  theme_light(base_size = 18)
+
+```
+
+Uznano  że dopasowanie wyszło dosyć dobrze. Wykresy gęstości rozkładów empirycznych zostały akceptowalnie odwzorowoane przez dopasowane rozkłady gęstości. 
 
 ***
 
@@ -295,11 +372,418 @@ Linia Empl_prac niestety nie daje się dopasowac do niczego dlatego postanowiono
 
 ***
 
+Koljenym krokiem w badaniu jest dopasowanie rozkładów do rozkładów start w każdej lini. Ponizej zaprezentowano statystyki opisowe dla 7 badanych linii.
+
+```{r}
+straty_lista <-split(database$strata, database$linia)
+
+straty_stat <- database %>%
+  group_by(linia) %>%
+  summarise(
+    
+    Średnia = mean(strata, na.rm = TRUE),
+    Sd = sd(strata, na.rm = TRUE),
+    Mediana = median(strata, na.rm = TRUE),
+    Liczba_obserwacji = n()
+  ) %>%
+  arrange(desc(Średnia))
+
+straty_stat
+```
+
+W wielu przypadkach średnia i Mediana drastycznie się od siebie różnią, oraz odchylenie standardowe jest bardzo wysokie, co wskazuje na rozkłady o wysokiej skośności i wariancji wśród danych. Linie też znacząco różnią się od siebie w ilości danych, jednak wszystkich jest na tyle duzo żeby wyniki przeprowadzanych testów i analiz były wiarygodne.
+
+**Wyniki testów**
+
+W pierwszym kroku, dopasowanie zostanie sprawdzone poprzez przeprowadzenie dwóch testów statystycznych, Kołmogorowa_Smirnova oraz Adnersona_Darlinga. Postanowiono przetestować dopasowanie do 4 rozkładów: Weibulla, Gamma, LNorm, Wykładniczego.
+
+```{r}
+
+
+fit_dis<- function(data_list, distributions = c("weibull", "gamma", "lnorm", "exp", "norm")) {
+  results <- data.frame()
+  
+  for (linia in names(data_list)) {
+    data <- data_list[[linia]]
+    data <- data[data > 0] 
+    
+    for (dist in distributions) {
+      fit <- tryCatch({
+        fitdist(data, distr = dist, method = "mle")
+      }, error = function(e) {
+        message(sprintf("Błąd dopasowania %s dla linii %s: %s", dist, linia, e$message))
+        return(NULL)
+      })
+      
+      if (!is.null(fit)) {
+       
+        gof <- gofstat(fit)
+        
+       
+        results <- rbind(results, data.frame(
+          linia = linia,
+          rozklad = dist,
+          parametry = paste(names(fit$estimate), round(fit$estimate, 4), sep = "=", collapse = ", "),
+          
+         
+          KS_wynik = gof$kstest,
+          
+         
+          AD_wynik = gof$adtest ,
+        
+          AIC = gof$aic,
+          stringsAsFactors = FALSE
+        ))
+      }
+    }
+  }
+  
+  return(results)
+}
+
+wyniki <- fit_dis(straty_lista)
+
+rownames(wyniki) <- NULL
+
+wyniki[,c(1:5)]
+
+
+#ggcomb
+```
+
+Same testy okazały sie nie wystarczajace w decyzji na temat konkretnego rozkładu, dodatkowo postanowiono obliczyć kryterium informacyjne AIC, które pomaga w wyborze miedzy modelami statystycznymi. Im niższy jest ten wskażnik, tym lepsze dopasowanie rozkładów. 
+
+```{r}
+wyniki[,c(1,2,6)]
+```
+
+Bazując na wynikach testów oraz kryterium AIC, udało się dopasować trzy rozkłady. Wyniki dopasowania zaprezentowano w ponizszej tabeli oraz na wykresach. Dopasowywano rozkłady o dwóch nieodrzuconych testach oraz najniżej wartości AIC
+
+```{r}
+wyniki[c(14,29,34), c(1,2,3)]
+```
+
+```{r}
+
+frame_Damage <- data.frame(straty_lista[[3]])
+
+ggplot()+
+  geom_density( data = frame_Damage, aes(x = straty_lista..3.., color = "Empiryczny" ), size = 0.7) +
+  geom_density(aes ( x = rexp(1000, rate = 0.0002), color = "Dopasowany" ), size = 0.7) +
+  scale_color_manual(values = c("#CD1076", "orange"), breaks = c("Empiryczny", "Dopasowany"))+
+  labs (y = "Damage", x = NULL, colour = "Rozkład")+
+  theme_light(base_size = 18)
+
+```
+```{r}
+
+frame_EX<- data.frame(straty_lista[[6]])
+
+ggplot()+
+  geom_density( data = frame_EX, aes(x = straty_lista..6.., color = "Empiryczny" ), size = 0.7) +
+  geom_density(aes ( x = rexp(1000, rate = 0.0002), color = "Dopasowany" ), size = 0.7) +
+  scale_color_manual(values = c("#CD1076", "orange"), breaks = c("Empiryczny", "Dopasowany"))+
+  labs (y = "External_FR", x = NULL, colour = "Rozkład")+
+  theme_light(base_size = 18)
+
+```
+
+```{r}
+
+frame_IN<- data.frame(straty_lista[[7]])
+
+ggplot()+
+  geom_density( data = frame_IN, aes(x = straty_lista..7.., color = "Empiryczny" ), size = 0.7) +
+  geom_density(aes ( x = rexp(1000, rate = 0.0002), color = "Dopasowany" ), size = 0.7) +
+  scale_color_manual(values = c("#CD1076", "orange"), breaks = c("Empiryczny", "Dopasowany"))+
+  labs (y = "Internal_FR", x = NULL, colour = "Rozkład")+
+  theme_light(base_size = 18)
+
+```
+
+Wszytskie 3 rozkłady zostały dopasowane do rozkłady wykładnieczego z parametrem rate = 0.0002. W przypadku pozostałych rozkładów, dopasowanie będzie dokonane nie tylko na podstawie testów ale również z pomocą wykresów QQ, poniewaz testy wskazują jedynie na odrzucenie, co nie pomaga w przeprowadzeniu symualcji.  
+
+Poniżej zaprzenowano rozkłady gęstości czterech wykresów gdzie dopasowanie nie jest jednoznaczne.
+
+```{r}
+frame_Buss<- data.frame(straty_lista[[1]])
+frame_Com<- data.frame(straty_lista[[2]])
+frame_Empl<- data.frame(straty_lista[[4]])
+frame_Exe<- data.frame(straty_lista[[5]])
+p1 <- ggplot()+
+  geom_density( data = frame_Buss, aes(x = straty_lista..1..), color = "#CD1076" , size = 0.7) +
+  labs (title = "Bussdistr", y = NULL, x = NULL)+
+  theme_light(base_size = 15)
+p2 <- ggplot()+
+  geom_density( data = frame_Com, aes(x = straty_lista..2..), color = "#CD1076" , size = 0.7) +
+  labs (title = "Com_Ban", y = NULL, x = NULL)+
+  theme_light(base_size = 15)
+p3 <- ggplot()+
+  geom_density( data = frame_Empl, aes(x = straty_lista..4..), color = "#CD1076", size = 0.7) +
+  labs (title = "Empl_Pract", y = NULL, x = NULL)+
+  theme_light(base_size = 15)
+p4 <- ggplot()+
+  geom_density( data = frame_Exe, aes(x = straty_lista..5..),color = "#CD1076" , size = 0.7) +
+  labs (title = "Execute_Del", y = NULL, x = NULL)+
+  theme_light(base_size = 15)
+
+
+plot_grid(p1, p2, p3, p4, nrow = 2, ncol = 2)
+```
+**Buss_distr**
+```{r}
+wyniki[c(1:5),]
+```
+
+
+```{r}
+
+wykres_qq <- function(data, distributions = c("weibull", "gamma", "lnorm", "exp", "norm")) {
+
+  # Ogranicz do 4 pierwszych rozkładów, aby zmieścić się w siatce 2x2
+  if (length(distributions) > 4) {
+    warning("Pokazuję tylko pierwsze 4 rozkłady, aby zmieścić się w siatce 2x2")
+    distributions <- distributions[1:4]
+  }
+  
+  plots <- list()
+  
+  for (i in seq_along(distributions)) {
+    dist <- distributions[i]
+    
+    tryCatch({
+      # Dopasuj rozkład
+      fit <- fitdist(data, distr = dist, method = "mle")
+      
+      # Stwórz wykres QQ
+      plots[[i]] <- ggplot(data.frame(sample = data), aes(sample = sample)) +
+        stat_qq(distribution = get(paste0("q", dist)), 
+                dparams = as.list(fit$estimate)) +
+        stat_qq_line(distribution = get(paste0("q", dist)), 
+                     dparams = as.list(fit$estimate), 
+                     color = "red", linetype = "dashed") +
+        ggtitle(paste("QQ plot -", dist, "distribution")) +
+        theme_minimal()
+      
+    }, error = function(e) {
+      message(sprintf("Błąd dopasowania rozkładu %s: %s", dist, e$message))
+      # Pusty wykres w przypadku błędu
+      plots[[i]] <- ggplot() + 
+        annotate("text", x = 0.5, y = 0.5, label = paste("Błąd:", dist)) +
+        theme_void()
+    })
+  }
+  
+  # Ustaw siatkę 2x2
+  if (length(plots) > 0) {
+    grid.arrange(grobs = plots, ncol = 2)
+  } else {
+    message("Nie udało się utworzyć żadnych wykresów")
+  }
+}    
+
+wykres_qq(frame_Buss$straty_lista..1.., distributions = c("weibull", "gamma", "lnorm", "exp"))
+```
+
+Łącząc informacje uzyskane z wykresów, testów oraz AIC, postanowiono dopadować rozkład Buss_dist do rozkładu lnorm. Rozkład BUss_distr jest bardzo specyficzny ze względu na tylko pare wartości ekstremalnie odstającyth oraz reszte wartości dokładnie równych 10.
+
+```{r}
+
+ggplot()+
+    geom_density(aes ( x = rlnorm(1000, meanlog = 2.7611, sdlog = 1.72), color = "Dopasowany" ), size = 0.7) +
+  geom_density( data = frame_Buss, aes(x = straty_lista..1.., color = "Empiryczny" ), size = 0.7) +
+
+  scale_color_manual(values = c("#CD1076", "orange"), breaks = c("Empiryczny", "Dopasowany"))+
+  labs (y = "Buss_distr", x = NULL, colour = "Rozkład")+
+  theme_light(base_size = 18)
+
+```
+
+**Com_ban**
+
+```{r}
+wyniki[c(6:10),]
+```
+
+```{r}
+wykres_qq(frame_Com$straty_lista..2.., distributions = c("weibull", "gamma", "lnorm", "exp"))
+```
+
+Pomimo tego że z wykresów to rozkład wykładniczy wydaje sie byc najlepszym dopasowaniem, wskażnik AIC daje dokładnie odwrotną informacje. Postanowiono ponownie dopasować rozkład lnorm, do rozkładu wysokości badanych strat. 
+
+```{r}
+ggplot()+
+    geom_density(aes ( x = rlnorm(1000, meanlog = 2.7611, sdlog = 1.72), color = "Dopasowany" ), size = 0.7) +
+  geom_density( data = frame_Buss, aes(x = straty_lista..1.., color = "Empiryczny" ), size = 0.7) +
+
+  scale_color_manual(values = c("#CD1076", "orange"), breaks = c("Empiryczny", "Dopasowany"))+
+  labs (y = "Buss_distr", x = NULL, colour = "Rozkład")+
+  theme_light(base_size = 18)
+```
+
+**Expl_pract**
+
+```{r}
+wyniki[c(16:20),]
+```
+
+```{r}
+wykres_qq(frame_Empl$straty_lista..4.., distributions = c("weibull", "gamma", "lnorm", "norm"))
+```
+
+Zdecydownie, w przypadku rozkałdu Empl_pract, najlepszym dopasowaniem będzie rozkład normalny z wsztskich rozwazanych w badaniu. Tą decyzje popierają wyniki z wszytskich trzech etapów dopasowania: test, AIC oraz wykres QQ.
+
+```{r}
+ggplot()+
+    geom_density(aes ( x = rnorm(1000, mean = 40000, sd = 7779.48), color = "Dopasowany" ), size = 0.7) +
+  geom_density( data = frame_Empl, aes(x = straty_lista..4.., color = "Empiryczny" ), size = 0.7) +
+
+  scale_color_manual(values = c("#CD1076", "orange"), breaks = c("Empiryczny", "Dopasowany"))+
+  labs (y = "Empl_pract", x = NULL, colour = "Rozkład")+
+  theme_light(base_size = 18)
+```
+
+**Execut_Del**
+
+```{r}
+wyniki[c(21:25),]
+```
+
+```{r}
+wykres_qq(frame_Exe$straty_lista..5.., distributions = c("weibull", "gamma", "lnorm", "exp"))
+```
+
+Ostatnie dopasowanie, pada ponownie na rozkład lnorm, ze względu na wykres oraz kryterium AIC. 
+
+```{r}
+ggplot()+
+    geom_density(aes ( x = rlnorm(1000, meanlog = 2.60, sdlog = 1.319), color = "Dopasowany" ), size = 0.7) +
+  geom_density( data = frame_Exe, aes(x = straty_lista..5.., color = "Empiryczny" ), size = 0.7) +
+
+  scale_color_manual(values = c("#CD1076", "orange"), breaks = c("Empiryczny", "Dopasowany"))+
+  labs (y = "Execute_del", x = NULL, colour = "Rozkład")+
+  theme_light(base_size = 18)
+```
+
+**Podsumowanie**
+
+W poniższej tabeli zaprezentowano podsumowanie wykonanych dopasowań do rozkładów wartości strat.
+
+```{r}
+colnames(wyniki) <- c("Linia", "Rozkład", "Parametry")
+wyniki[c(3,8,14,20,23, 29,34), c(1,2,3)]
+```
+
+```{r}
+pod
+```
+
+
 ***
 
 # Symulacja
 
 ***
+
+Teoretyczne rozkłady wysokości i częstości występowania start są niezbęde do przeprowadzenia symulacji wartości strat. Dzięki wygenerowaniu wysokiej liczby scenariuszy, mozliwym jest zamodelowanie Wartości starty jakiej na 99.9% nie przekroczymy. Ustalenie tej wartości nastepuje poprzez obliczenie konkretmego kwantyla z rozkładu scenariuszy. W badaniu wygenerowano 20 000 scenariuszy, gdzie każdy scenariusz to suma z wszytskich strat uzyskanych z jendego losowania w ramach każdej linii. 
+
+Poniżej przykładowe scenariusze z wszytskich wygenerowanych:
+
+```{r}
+symulacja <- function(){
+   result <- data.frame(Buss_distr = rep(0,20000), Com_Ban = rep(0,20000), Damage = rep(0,20000), Empl_Pract = rep(0,20000), Execute_Del = rep(0,20000), External_Fr =rep(0,20000), Internal_FR =rep(0,20000))
+   
+   for (i in c(1:20000)) {
+     result$Buss_distr[i] = sum(rlnorm(n = rbinom(1,size = dwu_df1$n[1], prob= dwu_df1$p[1]), meanlog =2.76, sdlog = 1.72))
+     
+     result$Com_Ban[i] = sum(rlnorm(n = rbinom(1,size = dwu_df1$n[2], prob= dwu_df1$p[2]), meanlog =2.4, sdlog = 0.9))
+     
+     result$Damage[i] = sum(rexp(n = rnbinom(n = 1, size = dwu_uj$size[1], mu = dwu_uj$mu[1]), rate = 0.0002))
+     
+     result$Empl_Pract[i] = sum(rnorm(n = rpois(1,lambda = 62), mean =2.76, sd = 1.72))
+     
+     result$Execute_Del[i] = sum(rlnorm(n = rbinom(1,size = dwu_df1$n[3], prob= dwu_df1$p[3]), meanlog =2.76, sdlog = 1.72))
+     
+     result$External_Fr[i] = sum(rexp(n = rbinom(1,size = dwu_df1$n[4], prob= dwu_df1$p[4]), rate = 0.0002))
+     
+     result$Internal_FR[i] = sum(rlnorm(n = rnbinom(n = 1, size = dwu_uj$size[2], mu = dwu_uj$mu[2]), meanlog =2.60, sdlog = 1.31))
+   }
+
+
+result$Strata = apply(result, 1, sum)
+return(result)
+}
+
+wyniki <- symulacja()
+
+head(wyniki)
+```
+
+Same pokazanie scenariuszy to mało, ponizej zaprezentowano statystyki opisowe dla każdej ze zmiennych oraz dla ich sumy
+
+```{r}
+
+statystyki_opisowe <- describe(wyniki)
+statystyki_opisowe[,c(3,4,5,8,9)]
+```
+
+
+
+```{r}
+wyniki %>%
+  ggplot() +
+  geom_density(aes(x = wyniki$Strata), fill = "orange", alpha = 0.6) +
+  geom_vline(xintercept = quantile(wyniki$Strata, 0.99), linetype = "dashed", color = "#CD1076")+
+  theme_minimal(base_size = 18) +
+  labs(
+    title = NULL,
+    x = " Suma strat [$]",
+    y = NULL
+  )
+  
+  
+```
+Na wykresie zaprezentowano rozkład gęstości wysokości sumy strat. Przecietnie występująca wartościa jest strata około 90 000$, rozkład charakteryzuje sie też wysoką skośnością lewostronną, co naturalnie wynika z ograniczenia wartości start, nie mogą być mniejsze niż zero. Różowa przerwana linia na wykresie prezentuje wartośc 99% OpVar'u obliczonego na podstawie tego rozkładu. W tym przypadku jest to około 270 000 dolarów. 
+
+
+
+Powyżej przedstawiono wyniki jednej przykładowej symulacji. Taką procedure losowania 20000 scenariuszy i wyznaczania OpVar i OpES powtórzono 100 razy oraz wyciagnięto średnią z wyników aby ustalic przwdziwą wysokość rozważanych indeksów ryzyka.
+
+**Wyniki**
+
+Interpretacja wyników jest następująca: Na 99.9% strata nie przkroczy wartości OpVar, natomiast jeżeli przekroczy to przecietnie wyniesie wartość OpES. Poniżej zaprezentowano parę przykładowych wyników.
+
+
+```{r}
+res <- data.frame(Var = rep(0,100), ES = rep(0,100))
+```
+
+
+```{r}
+for(i in c(1:100)) {
+  wynik <- symulacja()
+  res$Var[i] <- quantile(wynik$Strata, 0.999)
+  res$ES[i] <- mean(wynik$Strata[wynik$Strata > res$Var[i]])  
+}
+head(res)
+```
+
+Dla rozważanych w badaniu danych OpVar oraz ES wyniosły:
+```{r}
+u <- data.frame(mean(res$Var), mean(res$ES))
+colnames(u) <- c("VaR", "ES")
+u
+```
+
+***
+
+# Podsumowanie
+
+***
+
+W badaniu przeprowadzono próbe wyestymowanie operacyjnego Var'u oraz ES, dzieki modelowi AMA. Moje dopasowania okazały się w miare trafne, ponieważ szanowany badacz Jakub Wasiczek, laureat konferencji barbórkowej w sekcji Ekonomia Ekonometria i Anliza Danych,  osiagnał podobne wyniki, co bardzo mnie cieszy. Sam model AMA i całą jego procedure oceniam na w miarę przyjemną, ciekawi mnie jak w branży dopasowywują te rozkłady i czy to się serio udaje.
+
+
 
 
 
